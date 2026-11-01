@@ -1,0 +1,17 @@
+{
+  "environment": "sandbox",
+  "client_id": "",
+  "client_secret": "",
+  "ru_name": "",
+  "refresh_token": "",
+  "user_token": "",
+  "marketplace_id": "EBAY_US",
+  "content_language": "en-US",
+  "currency": "USD",
+  "merchant_location_key": "main-warehouse",
+  "location_postal_code": "",
+  "location_country": "US",
+  "fulfillment_policy_id": "",
+  "payment_policy_id": "",
+  "return_policy_id": ""
+}

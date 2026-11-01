@@ -14,6 +14,7 @@ amazon-ebay-arbitrage/
 ├── vero_checker.py        # Rà soát thương hiệu VeRO (block / warn / ignore)
 ├── listing_generator.py   # Title SEO ≤80 ký tự + HTML description đã làm sạch (Claude AI + dự phòng)
 ├── ebay_export.py         # CSV File Exchange cho Seller Hub Reports (đăng hàng loạt)
+├── ebay_publisher.py      # Auto Listing: đăng trực tiếp qua Sell Inventory API + OAuth + báo lỗi chi tiết
 ├── scraper.py             # "Cổng vào" lớp dữ liệu: get_product_source() / get_market_source()
 ├── config.py              # Đọc API key từ .env
 ├── sources/
@@ -24,8 +25,9 @@ amazon-ebay-arbitrage/
 │   ├── paapi.py           # Amazon PA-API 5 (tự ký AWS SigV4, không cần SDK)
 │   └── ebay.py            # eBay Browse (đang bán) + Marketplace Insights (đã bán)
 ├── data/vero_brands.csv   # Danh sách VeRO khởi đầu — BẠN CẦN BỔ SUNG
-├── tests/                 # 890 test, chạy offline bằng HTTP giả
+├── tests/                 # 900 test, chạy offline bằng HTTP giả
 ├── .env.example           # Mẫu cấu hình key
+├── config.example.json    # Mẫu config.json cho Auto Listing (copy thành config.json)
 └── requirements.txt
 ```
 
@@ -77,7 +79,7 @@ pip install -r requirements.txt
 
 cp .env.example .env              # Windows: copy .env.example .env  → điền key (tùy chọn)
 streamlit run ui_app.py           # mở http://localhost:8501
-python -m pytest -q               # chạy 890 test (không cần mạng/key)
+python -m pytest -q               # chạy 900 test (không cần mạng/key)
 ```
 
 Chưa có key nào thì tool vẫn chạy đầy đủ với **dữ liệu giả lập**. Nguồn nào có key thì sẽ tự hiện trong sidebar.
@@ -128,7 +130,85 @@ for r in (r for r in results if r.is_winner):
 open("ebay_bulk_upload.csv", "wb").write(to_csv(rows, ExportSettings(category_id="20625")))
 ```
 
-## 6. Những gì cần kiểm chứng trước khi dùng tiền thật
+## 6. Auto Listing: đăng thẳng lên eBay (`ebay_publisher.py`)
+
+Mỗi sản phẩm trong tab **📝 Listing & Export** có khối **🚀 Đăng lên eBay ngay**:
+
+1. **🔎 Gợi ý danh mục**: Taxonomy API đề xuất danh mục lá từ tiêu đề; nếu muốn, bạn có thể nhập ID tay.
+2. **📋 Kiểm tra thông số bắt buộc**: tool lấy item specifics bắt buộc của danh mục và điền sẵn vào ô Aspects
+   (ví dụ `Type: `), bạn chỉ cần điền giá trị.
+3. **Ảnh**: dán URL ảnh HTTPS mà bạn có quyền sử dụng. eBay yêu cầu ít nhất 1 ảnh.
+4. Nút đăng **tự khóa** khi gặp một trong các trường hợp sau, kèm lý do hiển thị ngay bên dưới:
+   - thiếu thông tin;
+   - sản phẩm dính VeRO;
+   - giá thấp hơn giá tối thiểu đạt biên;
+   - đang ở Production mà chưa tick xác nhận.
+5. Tool tự cấu hình: **Condition = NEW**, giá đã tính (.99), SKU = `SKU-<ASIN>`, 3 business policies mặc định
+   và kho hàng (tự tạo nếu chưa có). Đăng lại cùng SKU sẽ **cập nhật** offer cũ, không tạo listing trùng.
+6. Khi eBay từ chối, tool hiển thị **bước bị lỗi** (Xác thực / Kho hàng / Inventory item / Offer / Publish),
+   kèm **HTTP status, mã lỗi eBay (errorId), thông điệp gốc, chi tiết, tham số** và **💡 gợi ý sửa** bằng tiếng Việt.
+
+Quy trình tool gọi API: `token → location → PUT inventory_item/{sku} → POST/PUT offer → POST offer/{id}/publish`.
+
+> Vì sao chọn **Sell Inventory API** thay vì Trading API? Inventory API dùng REST/JSON, lỗi trả về có cấu trúc,
+> quản lý theo SKU và là hướng eBay khuyến nghị cho tích hợp mới. Lưu ý: listing tạo bằng Inventory API nên được
+> sửa tiếp bằng Inventory API (đăng lại từ tool), không trộn với Trading API.
+
+### Hướng dẫn lấy Token từ eBay Developer Portal
+
+**Bước 1: Tạo tài khoản developer.** Vào https://developer.ebay.com → *Register*. eBay có thể mất tới 1 ngày
+làm việc để duyệt.
+
+**Bước 2: Tạo Application Keys.** Đăng nhập → menu tài khoản → **Application Keys** → đặt tên app → tạo keyset
+**Sandbox** (và **Production** khi đã sẵn sàng). Mỗi keyset có:
+- **App ID (Client ID)**: điền vào ô *App ID*
+- **Cert ID (Client Secret)**: điền vào ô *Cert ID*. Giữ bí mật!
+- Dev ID: tool không dùng.
+
+> ⚠️ Keyset **Production** thường chỉ được kích hoạt sau khi bạn khai báo cách xử lý thông báo
+> *Marketplace Account Deletion*: đăng ký một endpoint, hoặc xin miễn trừ nếu app không lưu dữ liệu người dùng
+> eBay. Làm theo hướng dẫn hiện ra trên trang Application Keys.
+
+**Bước 3: Tạo tài khoản test (chỉ cho Sandbox).** Trên developer.ebay.com, mục *Sandbox* → tạo **Sandbox test
+user**. Đây là tài khoản bạn sẽ đăng nhập ở bước cấp quyền khi thử trên Sandbox.
+
+**Bước 4: Lấy RuName (eBay Redirect URL name).** Cạnh keyset, bấm **User Tokens** →
+*Get a Token from eBay via Your Application* → **Add eBay Redirect URL**:
+- Điền *Display Title* và *Privacy Policy URL*.
+- Điền **Auth Accepted URL**: một trang HTTPS bất kỳ của bạn. Trang này không cần xử lý gì, vì tool chỉ cần
+  đọc `code=` trên thanh địa chỉ.
+- Lưu lại, rồi copy giá trị **RuName** (dạng `Ten_Ban-TenApp-SBX-xxxx-yyyy`) vào ô *RuName* trong tool.
+
+**Bước 5: Lấy token, chọn 1 trong 2 cách (tab 🔌 Kết nối eBay):**
+- **Cách A, khuyến nghị (có refresh token sống ~18 tháng):**
+  1. Bấm *link cấp quyền eBay*, đăng nhập **tài khoản bán hàng** (Sandbox: test user) rồi bấm **Agree**.
+  2. eBay chuyển tới Auth Accepted URL. Copy **cả URL** trên thanh địa chỉ (có `code=...`) và dán vào tool
+     **trong vòng 5 phút**.
+  3. Bấm **🔑 Đổi lấy refresh token**. Từ đây tool tự xin access token mới mỗi 2 giờ.
+- **Cách B, thử nhanh:** trên trang *User Tokens* của Developer Portal, chọn *OAuth* → *Sign in* → copy
+  **User access token** (sống 2 giờ) rồi dán vào ô tương ứng và **nhấn Enter**. Nếu portal cấp cả refresh token,
+  dán refresh token để dùng lâu dài.
+
+Token phải có scope **sell.inventory** và **sell.account**. Link ở Cách A đã tự yêu cầu đủ các scope này.
+
+**Bước 6: Business Policies và kho hàng.**
+1. Tạo Shipping / Payment / Return policy trong **Seller Hub → Account → Business policies**. Nếu tài khoản chưa
+   bật Business Policies, bấm nút **Bật Business Policies** trong tool trước.
+2. Trong tool, bấm **📥 Tải chính sách** và chọn policy mặc định.
+3. Nhập **ZIP code** kho hàng.
+4. Bấm **💾 Lưu vào config.json**.
+
+> Giao diện Seller Hub của Sandbox khá hạn chế. Nếu không tạo được policy trên Sandbox, có thể cần tạo bằng
+> Account API.
+
+**Cấu hình bằng file** (thay vì nhập trên giao diện): `cp config.example.json config.json` rồi điền các trường.
+Tool nạp theo thứ tự ưu tiên `config.json` > biến môi trường `EBAY_CLIENT_ID / EBAY_CLIENT_SECRET /
+EBAY_REFRESH_TOKEN / EBAY_RUNAME`. File `config.json` chứa bí mật, đã nằm trong `.gitignore`, **đừng gửi cho ai**.
+
+**Luôn thử trên Sandbox trước.** Nếu một trường tool gửi lên bị Sandbox từ chối, bảng lỗi sẽ chỉ rõ trường nào,
+và bạn sửa trước khi chuyển sang Production.
+
+## 7. Những gì cần kiểm chứng trước khi dùng tiền thật
 
 Các adapter API được viết theo tài liệu của từng nhà cung cấp và được test bằng **phản hồi giả lập**.
 Chúng **chưa được chạy với key thật**. Khi có key, hãy chạy thử với `limit=3` và kiểm tra:
@@ -140,14 +220,18 @@ Chúng **chưa được chạy với key thật**. Khi có key, hãy chạy th�
 - **eBay File Exchange**: tải template của đúng danh mục từ Seller Hub → Reports → Uploads, so tiêu đề cột
   với `ebay_export.COLUMNS`, rồi upload thử 1–2 dòng trước.
 - **Phí eBay** (13.6% FVF, 0.30$/0.40$): đối chiếu trang *Selling fees* hiện hành.
+- **Auto Listing**: `ebay_publisher.py` được viết theo cấu trúc Sell Inventory / Account / Taxonomy API mà
+  tôi biết. Môi trường phát triển **không truy cập được** trang tài liệu developer.ebay.com để đối chiếu, nên tool
+  chỉ được test với một máy chủ eBay giả lập. Hãy chạy trên **Sandbox** trước và đọc kỹ bảng lỗi nếu có.
 - **AI Listing** dùng Claude với structured output và bật `fallbacks: "default"`: nếu model chính từ chối, API
   tự chạy lại trên model dự phòng; model dự phòng cũng từ chối thì tool tự dùng bộ sinh theo quy tắc. Test dùng
   client giả, nên lần đầu có key hãy tạo thử 1 listing và đọc kết quả.
 
-## 7. ⚠️ Rủi ro chính sách — đọc kỹ
+## 8. ⚠️ Rủi ro chính sách — đọc kỹ
 
 1. **eBay cấm "retail arbitrage dropshipping"**: không được đặt hàng từ một nhà bán lẻ khác (Amazon, Walmart...)
    rồi giao thẳng cho khách eBay. Vi phạm có thể khiến tài khoản bị hạ hạng, hạn chế hoặc khóa vĩnh viễn.
+   Auto Listing giúp đăng nhanh hơn, nên **vi phạm cũng nhân lên nhanh hơn**.
    Các bộ lọc trong tool (VeRO, xóa dấu vết Amazon) giúp listing chuyên nghiệp hơn, nhưng **không** làm mô hình
    này trở nên hợp lệ. Mô hình an toàn hơn là mua về kho rồi tự gửi đi, hoặc làm việc với nhà cung cấp/bán sỉ
    cho phép dropship.

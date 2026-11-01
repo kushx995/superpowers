@@ -8,7 +8,8 @@ Bố cục:
   • Sidebar : nguồn dữ liệu, phí eBay, thuế bang, hệ số rủi ro, VeRO (dùng chung mọi tab)
   • Tab 1   : Tính lợi nhuận 1 sản phẩm + what-if
   • Tab 2   : Quét sản phẩm (Amazon → VeRO → eBay → định giá → chấm điểm), chọn sản phẩm thắng
-  • Tab 3   : AI Listing (Title SEO + HTML Description) & Export CSV eBay Bulk Upload
+  • Tab 3   : AI Listing (Title SEO + HTML Description), nút "Đăng lên eBay ngay", Export CSV Bulk Upload
+  • Tab 4   : Kết nối eBay (token OAuth, kho hàng, business policies) cho tính năng Auto Listing
 
 Kết quả quét được lưu trong st.session_state → Streamlit chạy lại script mỗi lần bạn
 bấm/chỉnh gì đó nhưng KHÔNG gọi lại API (tiết kiệm quota/tiền).
@@ -32,6 +33,9 @@ from calculator import (
 )
 from config import settings
 from ebay_export import ExportRow, ExportSettings, to_csv
+from ebay_publisher import (
+    STEP_LABELS, EbayApiError, EbayPublisher, ListingRequest, PublisherConfig, PublishResult, parse_aspects_text,
+)
 from listing_generator import EBAY_TITLE_MAX, ListingGenerator, clean_title, contains_sensitive, sanitize_html
 from pipeline import ScanConfig, scan
 from scraper import (
@@ -296,23 +300,30 @@ def tab_listing() -> None:
     if not listings:
         return
 
+    cfg = pub_config()
+    if cfg.environment == "production":
+        st.checkbox("⚠️ Tôi xác nhận các nút 'Đăng lên eBay ngay' sẽ đăng lên tài khoản eBay THẬT (Production).",
+                    key="confirm_production")
+
     export_rows: list[ExportRow] = []
     for r in selected:
         lst = listings.get(r.product.asin)
         if lst is None:
             continue
         with st.expander(f"{'🤖' if lst.copy.generated_by.startswith('ai') else '📐'} {lst.title}  —  "
-                         f"${r.recommendation.recommended_price:.2f}"):
+                         f"${r.recommendation.recommended_price:.2f}",
+                         expanded=st.session_state.get("open_asin") == r.product.asin):
+            oc = keep_open(r.product.asin)
             for w in lst.warnings:
                 st.warning(w)
-            title = st.text_input("Title", lst.title, key=f"t_{r.product.asin}", max_chars=EBAY_TITLE_MAX)
+            title = st.text_input("Title", lst.title, key=f"t_{r.product.asin}", max_chars=EBAY_TITLE_MAX, on_change=oc)
             st.caption(f"{len(title)}/{EBAY_TITLE_MAX} ký tự · tạo bởi `{lst.copy.generated_by}`"
                        + (f" · keywords: {', '.join(lst.copy.keywords[:8])}" if lst.copy.keywords else ""))
             price = st.number_input("Giá đăng ($)", 0.01, 10_000.0, float(r.recommendation.recommended_price),
-                                    0.5, key=f"p_{r.product.asin}")
+                                    0.5, key=f"p_{r.product.asin}", on_change=oc)
             if price < r.recommendation.min_price:
                 st.error(f"Thấp hơn giá tối thiểu ${r.recommendation.min_price:.2f} → không đạt biên mục tiêu.")
-            raw = st.text_area("HTML Description (có thể chỉnh)", lst.description_html, height=150, key=f"d_{r.product.asin}")
+            raw = st.text_area("HTML Description (có thể chỉnh)", lst.description_html, height=150, key=f"d_{r.product.asin}", on_change=oc)
             html_clean = sanitize_html(raw)  # chỉnh tay xong vẫn phải qua bộ lọc
             components.html(html_clean, height=420, scrolling=True)
             title = clean_title(title)
@@ -320,6 +331,8 @@ def tab_listing() -> None:
                 st.error("Nội dung vẫn chứa từ nhạy cảm — đã được tự động loại khi export.")
             export_rows.append(ExportRow(r.product.asin, title, html_clean, price, r.product.brand,
                                          r.product.gtin, tuple(r.product.image_urls)))
+            st.divider()
+            publish_box(r, lst, title, html_clean, price)
 
     st.divider()
     st.markdown("#### ⬇️ Export CSV cho eBay (Seller Hub → Reports → Uploads)")
@@ -350,18 +363,229 @@ def tab_listing() -> None:
 
 
 # ---------------------------------------------------------------------------
+# AUTO LISTING — ĐĂNG TRỰC TIẾP LÊN eBay
+# ---------------------------------------------------------------------------
+def keep_open(asin: str):
+    """Callback: ghi nhớ sản phẩm đang chỉnh để expander không tự đóng sau mỗi lần Streamlit chạy lại."""
+    return lambda: st.session_state.__setitem__("open_asin", asin)
+
+
+def pub_config() -> PublisherConfig:
+    """Cấu hình đăng bài sống trong session (nạp lần đầu từ config.json / .env)."""
+    if "pub_cfg" not in st.session_state:
+        st.session_state["pub_cfg"] = PublisherConfig.load()
+    return st.session_state["pub_cfg"]
+
+
+def get_publisher() -> EbayPublisher:
+    """Giữ 1 publisher cho tới khi thông tin xác thực đổi (tái dùng token đã xin, đỡ gọi OAuth)."""
+    cfg = pub_config()
+    key = (cfg.environment, cfg.client_id, cfg.client_secret, cfg.refresh_token, cfg.user_token)
+    if st.session_state.get("publisher_key") != key:
+        st.session_state["publisher"] = EbayPublisher(cfg)
+        st.session_state["publisher_key"] = key
+    return st.session_state["publisher"]
+
+
+def show_ebay_error(step: str, status: int, rows: list[dict]) -> None:
+    st.error(f"❌ eBay từ chối ở bước **{STEP_LABELS.get(step, step)}**" + (f" (HTTP {status})" if status else ""))
+    st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
+    for hint in dict.fromkeys(r["Gợi ý sửa"] for r in rows):  # bỏ trùng, giữ thứ tự
+        st.markdown(f"💡 {hint}")
+
+
+def show_api_exception(exc: EbayApiError) -> None:
+    show_ebay_error(exc.step, exc.status, PublishResult(False, "", step=exc.step, status=exc.status,
+                                                        errors=exc.errors).error_rows())
+
+
+def publish_box(r, lst, title: str, html_clean: str, price: float) -> None:
+    """Khối "Đăng lên eBay ngay" cho một sản phẩm."""
+    cfg, asin = pub_config(), r.product.asin
+    env_badge = "🧪 SANDBOX" if cfg.environment == "sandbox" else "🔴 PRODUCTION"
+    st.markdown(f"##### 🚀 Đăng trực tiếp lên eBay · `{env_badge}`")
+    if not cfg.can_authenticate:
+        st.info("Chưa kết nối tài khoản eBay → vào tab **🔌 Kết nối eBay**.")
+        return
+    pub = get_publisher()
+    ss = st.session_state
+    oc = keep_open(asin)
+
+    # 1) Danh mục: gợi ý tự động từ tiêu đề (Taxonomy API) hoặc nhập tay
+    c1, c2, c3 = st.columns([3, 1, 1])
+    if c2.button("🔎 Gợi ý danh mục", key=f"sug_{asin}", on_click=oc):
+        try:
+            ss[f"sugs_{asin}"] = pub.suggest_categories(title)
+        except EbayApiError as exc:
+            show_api_exception(exc)
+    sugs = ss.get(f"sugs_{asin}") or []
+    if sugs:
+        picked = c1.selectbox("Danh mục gợi ý", sugs, key=f"pick_{asin}", on_change=oc, format_func=lambda x: f"{x[1]}  ({x[0]})")
+        category_id = picked[0]
+    else:
+        category_id = c1.text_input("Category ID (danh mục lá)", key=f"cat_{asin}", on_change=oc,
+                                    placeholder="Bấm 'Gợi ý danh mục' hoặc nhập số ID")
+    qty = c3.number_input("Số lượng", 1, 100, 2, key=f"q_{asin}", on_change=oc)
+
+    # 2) Item specifics bắt buộc của danh mục
+    if st.button("📋 Kiểm tra thông số bắt buộc", key=f"asp_{asin}", on_click=oc, disabled=not category_id):
+        try:
+            ss[f"req_{asin}"] = pub.required_aspects(category_id)
+        except EbayApiError as exc:
+            show_api_exception(exc)
+    required = ss.get(f"req_{asin}")
+    known = {k: v for k, v in lst.copy.specs.items() if k.lower() != "condition"}
+    default_aspects = "\n".join([f"{k}: {v}" for k, v in known.items()]
+                                 + [f"{a}: " for a in (required or []) if a not in known and a not in ("Brand", "MPN")])
+    a1, a2 = st.columns(2)
+    aspects_text = a1.text_area("Item specifics (mỗi dòng `Tên: giá trị1, giá trị2`)", default_aspects,
+                                key=f"asptxt_{asin}_{len(required or [])}", on_change=oc, height=120)
+    images_text = a2.text_area("URL ảnh HTTPS (mỗi dòng 1 ảnh — ảnh bạn có quyền dùng)", key=f"img_{asin}", on_change=oc, height=120)
+
+    req = ListingRequest(
+        sku=f"SKU-{asin}", title=title, description_html=html_clean, price=round(price, 2),
+        category_id=str(category_id or "").strip(), quantity=int(qty), brand=r.product.brand, gtin=r.product.gtin,
+        image_urls=[u.strip() for u in images_text.splitlines() if u.strip()],
+        aspects=parse_aspects_text(aspects_text),
+    )
+
+    # 3) Điều kiện chặn đăng
+    blockers = pub.validate(req, required)
+    if r.vero.level == "block":
+        blockers.insert(0, f"Thương hiệu VeRO ({r.vero.summary}) — không cho phép đăng.")
+    if price < r.recommendation.min_price:
+        blockers.insert(0, f"Giá ${price:.2f} thấp hơn giá tối thiểu ${r.recommendation.min_price:.2f}.")
+    if cfg.environment == "production" and not ss.get("confirm_production"):
+        blockers.append("Chưa tick xác nhận đăng lên Production (đầu tab).")
+    if required is None:
+        st.caption("💡 Nên bấm 'Kiểm tra thông số bắt buộc' trước để tránh bị eBay từ chối vì thiếu item specifics.")
+    for b in blockers:
+        st.warning(b)
+
+    if st.button("🚀 Đăng lên eBay ngay", key=f"pub_{asin}", on_click=oc, type="primary", disabled=bool(blockers)):
+        with st.spinner("Đang gửi lên eBay..."):
+            ss[f"res_{asin}"] = pub.publish(req, required)
+
+    res: PublishResult | None = ss.get(f"res_{asin}")
+    if res is None:
+        return
+    if res.success:
+        st.success(f"✅ Đã đăng thành công! Listing ID **{res.listing_id}** → [{res.url}]({res.url})")
+    else:
+        show_ebay_error(res.step, res.status, res.error_rows())
+    if res.warnings:
+        st.warning("Cảnh báo từ eBay: " + "; ".join(f"{w.error_id}: {w.message}" for w in res.warnings))
+    if res.log:
+        st.caption(" · ".join(res.log))
+
+
+def tab_connection() -> None:
+    st.subheader("🔌 Kết nối tài khoản eBay (Auto Listing qua Sell Inventory API)")
+    cfg = pub_config()
+    ss = st.session_state
+
+    env = st.radio("Môi trường", ["sandbox", "production"], index=["sandbox", "production"].index(cfg.environment),
+                   horizontal=True, format_func={"sandbox": "🧪 Sandbox (thử nghiệm — khuyến nghị trước)",
+                                                 "production": "🔴 Production (tài khoản thật)"}.get)
+    if env != cfg.environment:
+        cfg.environment = env
+        ss.pop("policies", None)
+    st.caption("Sandbox và Production dùng **bộ key khác nhau** và tài khoản khác nhau.")
+
+    st.markdown("##### 1. Application keys (developer.ebay.com → Application Keys)")
+    k1, k2, k3 = st.columns(3)
+    cfg.client_id = k1.text_input("App ID (Client ID)", cfg.client_id)
+    cfg.client_secret = k2.text_input("Cert ID (Client Secret)", cfg.client_secret, type="password")
+    cfg.ru_name = k3.text_input("RuName (eBay Redirect URL name)", cfg.ru_name,
+                                help="User Tokens → Get a Token from eBay via Your Application → RuName.")
+
+    st.markdown("##### 2. User token của tài khoản bán hàng")
+    t_oauth, t_paste = st.tabs(["Cách A — Lấy qua tool (khuyến nghị)", "Cách B — Dán token có sẵn"])
+    with t_oauth:
+        if cfg.client_id and cfg.ru_name:
+            st.markdown(f"① Mở [link cấp quyền eBay]({get_publisher().client.consent_url()}) → đăng nhập tài khoản "
+                        "**bán hàng** → bấm **Agree**.\n\n② Trình duyệt chuyển tới trang 'accept URL' của bạn. "
+                        "Copy **toàn bộ URL** trên thanh địa chỉ (có `code=...`) và dán vào ô dưới **trong vòng 5 phút**.")
+            code = st.text_input("URL sau khi cấp quyền (hoặc chỉ mã code)")
+            if st.button("🔑 Đổi lấy refresh token", disabled=not code):
+                try:
+                    data = get_publisher().client.exchange_code(code)
+                    days = int(data.get("refresh_token_expires_in", 0)) // 86400
+                    st.success(f"Đã nhận refresh token (hiệu lực ~{days} ngày). Bấm 'Lưu vào config.json' để giữ lại.")
+                except EbayApiError as exc:
+                    show_api_exception(exc)
+        else:
+            st.info("Điền App ID và RuName ở trên để tạo link cấp quyền.")
+    with t_paste:
+        st.caption("Dán xong nhấn **Enter** để tool ghi nhận.")
+        cfg.refresh_token = st.text_input("Refresh token (sống ~18 tháng)", cfg.refresh_token, type="password")
+        cfg.user_token = st.text_input("Hoặc User access token (sống 2 giờ)", cfg.user_token, type="password")
+
+    st.markdown("##### 3. Kho hàng (Inventory Location)")
+    l1, l2, l3 = st.columns(3)
+    cfg.location_postal_code = l1.text_input("ZIP code kho/nơi gửi hàng", cfg.location_postal_code)
+    cfg.location_country = l2.text_input("Quốc gia (mã 2 ký tự)", cfg.location_country)
+    cfg.merchant_location_key = l3.text_input("Mã kho (merchantLocationKey)", cfg.merchant_location_key)
+
+    st.markdown("##### 4. Business policies mặc định (Shipping / Payment / Return)")
+    if st.button("📥 Tải chính sách từ tài khoản eBay"):
+        if not cfg.can_authenticate:
+            st.warning("Chưa có token. Dán refresh token / user token ở bước 2 rồi **nhấn Enter**.")
+        else:
+            try:
+                ss["policies"] = get_publisher().get_policies()
+            except EbayApiError as exc:
+                show_api_exception(exc)
+    policies = ss.get("policies")
+    if policies is not None:
+        if not any(policies.values()):
+            st.warning("Tài khoản chưa có business policy nào (hoặc chưa bật Business Policies).")
+            if st.button("Bật Business Policies cho tài khoản"):
+                try:
+                    get_publisher().opt_in_business_policies()
+                    st.success("Đã gửi yêu cầu bật. Tạo policy trong Seller Hub → Account → Business policies rồi tải lại.")
+                except EbayApiError as exc:
+                    show_api_exception(exc)
+        cols = st.columns(3)
+        for col, kind, attr, label in ((cols[0], "fulfillment", "fulfillment_policy_id", "Shipping"),
+                                       (cols[1], "payment", "payment_policy_id", "Payment"),
+                                       (cols[2], "return", "return_policy_id", "Return")):
+            opts = policies.get(kind) or []
+            if not opts:
+                col.error(f"Không có {label} policy")
+                continue
+            ids = [o[0] for o in opts]
+            idx = ids.index(getattr(cfg, attr)) if getattr(cfg, attr) in ids else 0
+            setattr(cfg, attr, col.selectbox(f"{label} policy", opts, index=idx,
+                                             format_func=lambda o: f"{o[1]} ({o[0]})")[0])
+    else:
+        st.caption(f"Đang dùng ID: Shipping `{cfg.fulfillment_policy_id or '—'}` · Payment `{cfg.payment_policy_id or '—'}` "
+                   f"· Return `{cfg.return_policy_id or '—'}`")
+
+    st.divider()
+    ok = {"Token": cfg.can_authenticate, "Kho hàng": bool(cfg.location_postal_code),
+          "Policies": bool(cfg.fulfillment_policy_id and cfg.payment_policy_id and cfg.return_policy_id)}
+    st.markdown("**Trạng thái:** " + " · ".join(f"{'✅' if v else '❌'} {k}" for k, v in ok.items()))
+    if st.button("💾 Lưu vào config.json"):
+        cfg.save()
+        st.success("Đã lưu `config.json` (chứa bí mật — đã được .gitignore bỏ qua, đừng gửi file này cho ai).")
+
+
+# ---------------------------------------------------------------------------
 # MAIN
 # ---------------------------------------------------------------------------
 def main() -> None:
     st.title("💰 Amazon → eBay Profit Finder")
     s = sidebar()
-    t1, t2, t3 = st.tabs(["🧮 Tính lợi nhuận", "🔎 Quét sản phẩm", "📝 Listing & Export"])
+    t1, t2, t3, t4 = st.tabs(["🧮 Tính lợi nhuận", "🔎 Quét sản phẩm", "📝 Listing & Export", "🔌 Kết nối eBay"])
     with t1:
         tab_calculator(s)
     with t2:
         tab_scanner(s)
     with t3:
         tab_listing()
+    with t4:
+        tab_connection()
 
 
 main()
