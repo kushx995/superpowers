@@ -1,0 +1,47 @@
+brand,aliases,brand_level,title_level,note
+# ĐÂY LÀ DANH SÁCH KHỞI ĐẦU do cộng đồng người bán thường cảnh báo — KHÔNG phải danh sách chính thức của eBay.
+# Hãy bổ sung từ trang "VeRO Participant Profiles" của eBay và kinh nghiệm thực tế của bạn.
+# brand_level: mức xử lý khi trường THƯƠNG HIỆU của sản phẩm khớp; title_level: khi chỉ xuất hiện trong tiêu đề/mô tả.
+# Mức: block (loại bỏ) | warn (đánh dấu cần kiểm tra) | ignore (bỏ qua)
+Nike,Air Jordan|Jordan Brand,block,block,Thời trang/giày — báo cáo rất thường xuyên
+Adidas,,block,block,
+Under Armour,,block,warn,
+The North Face,North Face,block,block,
+Apple,iPhone|iPad|AirPods|MacBook,block,warn,"Từ ""Apple"" hay gặp trong ""apple slicer"" → tiêu đề chỉ cảnh báo"
+Beats,Beats by Dre,block,warn,
+Bose,,block,block,
+Samsung,Galaxy,block,warn,
+Sony,PlayStation,block,warn,
+Microsoft,Xbox,block,warn,
+Nintendo,Pokemon|Pokémon|Super Mario,block,block,
+Disney,Marvel|Star Wars|Pixar|Frozen,block,block,Nhân vật bản quyền
+Warner Bros,Harry Potter|DC Comics|Batman,block,block,
+LEGO,,block,block,
+Mattel,Barbie|Hot Wheels,block,warn,
+Hasbro,Transformers|My Little Pony,block,warn,
+Louis Vuitton,LV,block,block,Hàng xa xỉ — rủi ro hàng giả cao
+Gucci,,block,block,
+Chanel,,block,block,
+Hermes,Hermès,block,block,
+Prada,,block,block,
+Rolex,,block,block,
+Cartier,,block,block,
+Tiffany & Co,Tiffany,block,warn,
+Michael Kors,,block,block,
+Coach,,block,ignore,"""coach"" là từ thông dụng → chỉ chặn khi trường brand khớp"
+Kate Spade,,block,block,
+Ray-Ban,Rayban,block,block,
+Oakley,,block,block,
+Pandora,,block,warn,
+Swarovski,,block,block,
+Yeti,,block,warn,
+Hydro Flask,,block,block,
+Stanley,,warn,ignore,Trùng tên dụng cụ Stanley → chỉ cảnh báo
+Otterbox,,block,warn,
+Dyson,,block,block,
+KitchenAid,,block,warn,
+Harley-Davidson,Harley Davidson,block,block,
+NFL,,block,block,Giải thể thao & đội bóng
+NBA,,block,block,
+MLB,,block,block,
+NHL,,block,block,

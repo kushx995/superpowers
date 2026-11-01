@@ -15,7 +15,9 @@ Với giá bán eBay P (giả định listing FREE SHIPPING — cách cạnh tra
     Phí cố định / đơn         = 0.30$ hoặc 0.40$ (tùy tổng đơn ≤ hay > 10$)
     Phí quảng cáo (Promoted)  = P × tỉ lệ quảng cáo
     Dự phòng hoàn hàng        = P × tỉ lệ dự phòng
-    Giá vốn Amazon            = giá Amazon × (1 + sales tax khi mua)
+    Giá vốn Amazon            = giá Amazon × (1 + sales tax bang nơi nhận hàng, 0–10%)
+    Buffer biến động giá      = giá vốn Amazon × % buffer  (dự phòng Amazon tăng giá
+                                sau khi bạn đã đăng bán — rủi ro số 1 của mô hình này)
     Phí vận chuyển + chi khác = cố định
 
     Lợi nhuận trước thuế  = P − tất cả chi phí ở trên
@@ -27,7 +29,7 @@ ta giải được CHÍNH XÁC giá bán tối thiểu để đạt biên lợi 
 không cần dò thử (brute-force):
 
     Đặt a = 1 − (1 + t_mua) × FVF − tỉ lệ QC − tỉ lệ dự phòng   (phần còn lại trên mỗi 1$ doanh thu)
-        C = giá vốn Amazon + ship + chi khác + phí cố định     (chi phí không phụ thuộc P)
+        C = giá vốn Amazon × (1 + buffer) + ship + chi khác + phí cố định   (không phụ thuộc P)
         k = 1 − thuế thu nhập
 
     Net = (a·P − C)·k   và ta cần   Net / P ≥ m   (m = biên lợi nhuận mục tiêu)
@@ -53,6 +55,32 @@ EBAY_CATEGORY_FVF: dict[str, float] = {
     "Sách / Phim / Nhạc (Books, Movies & Music)": 0.153,
     "Mức 13.25% (biểu phí cũ)": 0.1325,
     "Mức 12.5% (Store có ưu đãi)": 0.125,
+}
+
+# Sales tax CẤP BANG (chưa gồm thuế địa phương — thực tế có thể cao hơn 1–3%).
+# Đây là mức thuế bạn trả khi mua trên Amazon, phụ thuộc ĐỊA CHỈ NHẬN HÀNG.
+# Giá trị tham khảo; giao diện cho phép chỉnh tay từ 0% đến 10%.
+US_STATE_SALES_TAX: dict[str, float] = {
+    "Không chịu thuế / có giấy miễn thuế (Tax-exempt)": 0.0,
+    "Oregon (OR)": 0.0,
+    "Delaware (DE)": 0.0,
+    "Montana (MT)": 0.0,
+    "New Hampshire (NH)": 0.0,
+    "Alaska (AK) — chỉ thuế địa phương": 0.0,
+    "New York (NY)": 0.04,
+    "Georgia (GA)": 0.04,
+    "North Carolina (NC)": 0.0475,
+    "Ohio (OH)": 0.0575,
+    "Florida (FL)": 0.06,
+    "Pennsylvania (PA)": 0.06,
+    "Michigan (MI)": 0.06,
+    "Texas (TX)": 0.0625,
+    "Illinois (IL)": 0.0625,
+    "Washington (WA)": 0.065,
+    "New Jersey (NJ)": 0.06625,
+    "Tennessee (TN)": 0.07,
+    "Indiana (IN)": 0.07,
+    "California (CA)": 0.0725,
 }
 
 
@@ -91,6 +119,13 @@ class ProductCost:
     amazon_sales_tax_rate: float = 0.0  # Sales tax khi mua trên Amazon (0 nếu có tax-exempt)
     shipping_cost: float = 0.0          # Phí ship tới khách (0 nếu Amazon Prime freeship)
     other_cost: float = 0.0             # Chi phí khác: đóng gói, phần mềm, phí chuyển tiền...
+    price_buffer_rate: float = 0.0      # % dự phòng Amazon tăng giá (gợi ý: theo độ biến động 90 ngày)
+
+    def __post_init__(self) -> None:
+        if self.amazon_price <= 0:
+            raise ValueError("Giá Amazon phải lớn hơn 0")
+        if not 0 <= self.amazon_sales_tax_rate <= 0.15:
+            raise ValueError("Sales tax Amazon phải trong khoảng 0–15%")
 
     @property
     def amazon_tax(self) -> float:
@@ -102,9 +137,19 @@ class ProductCost:
         return self.amazon_price + self.amazon_tax
 
     @property
+    def price_buffer(self) -> float:
+        """Số tiền dự phòng cho biến động giá Amazon."""
+        return self.amazon_total * self.price_buffer_rate
+
+    @property
+    def fixed_costs(self) -> float:
+        """Tổng chi phí không phụ thuộc giá bán eBay (chưa gồm phí cố định eBay)."""
+        return self.amazon_total + self.price_buffer + self.shipping_cost + self.other_cost
+
+    @property
     def total_cost_basis(self) -> float:
-        """Tổng vốn bỏ ra cho 1 đơn (dùng để tính ROI)."""
-        return self.amazon_total + self.shipping_cost + self.other_cost
+        """Tổng vốn bỏ ra cho 1 đơn (dùng để tính ROI; gồm cả buffer cho thận trọng)."""
+        return self.fixed_costs
 
 
 # ---------------------------------------------------------------------------
@@ -117,6 +162,7 @@ class ProfitBreakdown:
     sale_price: float
     amazon_price: float
     amazon_tax: float
+    price_buffer: float
     shipping_cost: float
     other_cost: float
     ebay_order_total: float      # Tổng đơn eBay dùng để tính FVF (gồm thuế người mua)
@@ -148,6 +194,7 @@ class ProfitBreakdown:
             ("Giá bán eBay (doanh thu)", self.sale_price),
             ("Giá mua Amazon", -self.amazon_price),
             ("Sales tax khi mua Amazon", -self.amazon_tax),
+            ("Buffer biến động giá Amazon", -self.price_buffer),
             ("Phí vận chuyển", -self.shipping_cost),
             ("Chi phí khác", -self.other_cost),
             ("eBay Final Value Fee", -self.ebay_fvf),
@@ -158,6 +205,12 @@ class ProfitBreakdown:
             ("Thuế thu nhập dự kiến", -self.income_tax),
             ("= LỢI NHUẬN RÒNG (Net)", self.net_profit),
         ]
+
+    def cost_shares(self) -> list[tuple[str, float]]:
+        """Mỗi khoản chi chiếm bao nhiêu % giá bán — giúp thấy ngay khoản nào "ăn" lời nhiều nhất."""
+        rows = [(label, -amount / self.sale_price) for label, amount in self.to_rows()
+                if amount < 0]
+        return sorted(rows, key=lambda r: r[1], reverse=True)
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -197,9 +250,7 @@ def analyze_profit(sale_price: float, cost: ProductCost, fees: FeeSettings) -> P
 
     profit_before_tax = (
         sale_price
-        - cost.amazon_total
-        - cost.shipping_cost
-        - cost.other_cost
+        - cost.fixed_costs  # giá Amazon + thuế + buffer + ship + chi khác
         - fvf
         - fixed_fee
         - promoted
@@ -214,6 +265,7 @@ def analyze_profit(sale_price: float, cost: ProductCost, fees: FeeSettings) -> P
         sale_price=_round_cents(sale_price),
         amazon_price=_round_cents(cost.amazon_price),
         amazon_tax=_round_cents(cost.amazon_tax),
+        price_buffer=_round_cents(cost.price_buffer),
         shipping_cost=_round_cents(cost.shipping_cost),
         other_cost=_round_cents(cost.other_cost),
         ebay_order_total=_round_cents(order_total),
@@ -252,7 +304,7 @@ def min_price_for_margin(
     if denom <= 0:
         return None
 
-    base_fixed_costs = cost.amazon_total + cost.shipping_cost + cost.other_cost
+    base_fixed_costs = cost.fixed_costs
     candidates: list[float] = []
 
     # Phí cố định có 2 bậc → giải cho từng bậc rồi kiểm tra nghiệm có rơi đúng bậc đó không.
@@ -284,6 +336,17 @@ def charm_price(price: float) -> float:
     cents = math.ceil(price * 100 - 1e-6)  # làm tròn LÊN tới số nguyên cent
     dollars = math.ceil((cents - 99) / 100)
     return dollars + 0.99
+
+
+def suggest_buffer_rate(volatility_90d: Optional[float], floor: float = 0.02, cap: float = 0.15) -> float:
+    """Gợi ý % buffer từ độ biến động giá Amazon 90 ngày ((max − min) / trung bình).
+
+    Lấy một nửa biên độ dao động làm mức tăng giá "điển hình", kẹp trong [floor, cap].
+    Không có lịch sử giá → dùng mức sàn.
+    """
+    if volatility_90d is None:
+        return floor
+    return round(min(cap, max(floor, volatility_90d / 2)), 4)
 
 
 def recommend_price(
