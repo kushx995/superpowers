@@ -108,7 +108,39 @@ function Ice() {
   );
 }
 
-const ART = { espresso: Espresso, milk: Milk, catnip: Catnip, ice: Ice };
+function Steam() {
+  return (
+    <g>
+      <ellipse cx="32" cy="57" rx="18" ry="4" fill="#000" opacity="0.15" />
+      {/* steam wand jug */}
+      <path d="M16 30 L48 30 L45 54 Q32 58 19 54 Z" fill="#d9d2c8" stroke={INK} strokeWidth="2.5" strokeLinejoin="round" />
+      <path d="M48 34 Q56 36 54 44 Q52 49 46 48" fill="none" stroke={INK} strokeWidth="3.5" />
+      <path d="M20 34 L22 50" stroke="#fff" strokeWidth="2.5" strokeLinecap="round" opacity="0.9" />
+      <rect x="16" y="27" width="32" height="6" rx="3" fill="#ff8a5c" stroke={INK} strokeWidth="2.2" />
+      {/* flame + steam */}
+      <path d="M32 22 Q24 14 30 6 Q31 12 35 10 Q40 16 32 22 Z" fill="#ff7a45" stroke={INK} strokeWidth="2" strokeLinejoin="round" />
+      <path d="M32 20 Q29 16 31 12 Q33 15 34 14 Q35 18 32 20 Z" fill="#ffd23f" />
+      <path d="M18 22 Q14 16 18 10 M46 22 Q50 16 46 10" stroke="#fff" strokeWidth="3" strokeLinecap="round" fill="none" opacity="0.85" />
+    </g>
+  );
+}
+
+const ART = { espresso: Espresso, milk: Milk, catnip: Catnip, ice: Ice, steam: Steam };
+
+export function CrateIcon({ size = 36 }) {
+  return (
+    <svg viewBox="0 0 64 62" width={size} height={size} className="overflow-visible">
+      <ellipse cx="32" cy="57" rx="24" ry="4" fill="#000" opacity="0.15" />
+      <rect x="8" y="22" width="48" height="32" rx="4" fill="#c08a5b" stroke={INK} strokeWidth="2.5" />
+      <path d="M8 33 L56 33 M8 44 L56 44" stroke="#8a5532" strokeWidth="2" />
+      <path d="M12 26 L52 50 M52 26 L12 50" stroke="#a36a42" strokeWidth="3" />
+      <rect x="8" y="22" width="48" height="32" rx="4" fill="none" stroke={INK} strokeWidth="2.5" />
+      <circle cx="20" cy="16" r="7" fill="#fff8ec" stroke={INK} strokeWidth="2" />
+      <rect x="28" y="6" width="10" height="17" rx="3" fill="#74c6f2" stroke={INK} strokeWidth="2" />
+      <ellipse cx="46" cy="16" rx="6" ry="8" fill="#72d25f" stroke={INK} strokeWidth="2" />
+    </svg>
+  );
+}
 
 export function IngredientIcon({ id, size = 40 }) {
   const Art = ART[id];

@@ -195,7 +195,7 @@ function FrothStage({ level, onResult, paused }) {
  * @param {(result: string, index: number) => void} props.onStage called after each stage
  * @param {(results: string[]) => void} props.onDone
  */
-export default function QTECrafting({ steps, upgrades, onStage, onDone, paused }) {
+export default function QTECrafting({ steps, upgrades, onStage, onDone, paused, label, onCancel }) {
   const [index, setIndex] = useState(0);
   const [flash, setFlash] = useState(null);
   const results = useRef([]);
@@ -229,6 +229,12 @@ export default function QTECrafting({ steps, upgrades, onStage, onDone, paused }
       animate={{ opacity: 1, scale: 1 }}
       exit={{ opacity: 0, scale: 0.9 }}
     >
+      {label && <div className="font-display text-[12px] text-gold-200">{label}</div>}
+      {onCancel && (
+        <button type="button" onClick={onCancel} className="btn btn-cream absolute right-2 top-2 z-10 px-2 py-1 font-display text-[11px]" aria-label="Craft later">
+          Later ✕
+        </button>
+      )}
       <div className="flex items-center gap-2">
         {[...steps, 'serve'].map((s, i) => (
           <div

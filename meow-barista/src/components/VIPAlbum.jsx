@@ -1,7 +1,7 @@
 // Collectible VIP Album: serve each VIP once to unlock their card and lore.
 import { useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { INGREDIENT_ORDER, VIPS } from '../game/data';
+import { VIPS } from '../game/data';
 import { useGame } from '../game/store';
 import { audio } from '../audio/engine';
 import { haptic, HAPTIC } from '../hooks/haptics';
@@ -90,9 +90,10 @@ export default function VIPAlbum() {
               <div className="card relative p-2.5 text-sm">
                 <div className="font-display">★ Signature: {open.recipe.name}</div>
                 <div className="mt-1 flex flex-wrap justify-center gap-1">
-                  {INGREDIENT_ORDER.filter((id) => open.recipe.parts[id]).map((id) => (
-                    <span key={id} className="card-inset flex items-center px-1 font-display">
-                      <IngredientIcon id={id} size={24} />×{open.recipe.parts[id]}
+                  {open.recipe.seq.map((id, i) => (
+                    <span key={`${id}-${i}`} className="card-inset relative flex items-center px-0.5">
+                      <IngredientIcon id={id} size={24} />
+                      <span className="absolute -left-1 -top-1 grid h-3.5 w-3.5 place-items-center rounded-full bg-roast-700 text-[8px] font-bold text-cream">{i + 1}</span>
                     </span>
                   ))}
                   {open.recipe.steps.map((s) => (

@@ -1,41 +1,53 @@
 // Static game content: ingredients, recipes, customers, VIPs, shop, cats, weather.
 
 export const INGREDIENTS = {
-  espresso: { id: 'espresso', name: 'Espresso', emoji: '☕', color: '#5b3216', layer: 'from-[#7a4520] to-[#3b1f0d]' },
-  milk: { id: 'milk', name: 'Milk', emoji: '🥛', color: '#fdf3e1', layer: 'from-[#fffaf0] to-[#f1dfc2]' },
-  catnip: { id: 'catnip', name: 'Catnip', emoji: '🌿', color: '#6fcf5b', layer: 'from-[#9be37f] to-[#4fae3c]' },
-  ice: { id: 'ice', name: 'Ice', emoji: '🧊', color: '#bfefff', layer: 'from-[#e6fbff] to-[#9fdcf2]' },
+  espresso: { id: 'espresso', name: 'Espresso', role: 'base', color: '#5b3216' },
+  milk: { id: 'milk', name: 'Milk', role: 'base', color: '#fdf3e1' },
+  steam: { id: 'steam', name: 'Steam', role: 'temp', color: '#ffb3a0' },
+  ice: { id: 'ice', name: 'Ice', role: 'temp', color: '#bfefff' },
+  catnip: { id: 'catnip', name: 'Catnip', role: 'topping', color: '#6fcf5b' },
 };
-export const INGREDIENT_ORDER = ['espresso', 'milk', 'catnip', 'ice'];
+export const INGREDIENT_ORDER = ['espresso', 'milk', 'steam', 'ice', 'catnip'];
 
-// steps: crafting QTE stages that must be completed before serving.
+// Every drink is a STRICT sequence: base liquid -> temperature (steam = hot, ice = cold) -> extras/toppings.
+// One wrong step ruins the cup. `steps` are crafting QTEs done after the sequence is complete.
+const r = (id, name, seq, steps, price) => ({ id, name, seq, steps, price, hot: seq.includes('steam') });
 export const RECIPES = {
-  saucer: { id: 'saucer', name: 'Warm Milk Saucer', parts: { milk: 1 }, steps: [], price: 4, hot: true },
-  espresso: { id: 'espresso', name: 'Purrspresso', parts: { espresso: 1 }, steps: [], price: 6, hot: true },
-  icedShot: { id: 'icedShot', name: 'Iced Shot', parts: { espresso: 1, ice: 1 }, steps: [], price: 7, hot: false },
-  doppio: { id: 'doppio', name: 'Double Paw Doppio', parts: { espresso: 2 }, steps: ['grind'], price: 10, hot: true },
-  latte: { id: 'latte', name: 'Fluffy Latte', parts: { espresso: 1, milk: 1 }, steps: ['froth'], price: 11, hot: true },
-  nipLatte: { id: 'nipLatte', name: 'Catnip Latte', parts: { catnip: 1, milk: 1 }, steps: ['froth'], price: 10, hot: true },
-  icedLatte: { id: 'icedLatte', name: 'Iced Whisker Latte', parts: { espresso: 1, milk: 1, ice: 1 }, steps: [], price: 12, hot: false },
-  cappuccino: { id: 'cappuccino', name: 'Catpuccino', parts: { espresso: 1, milk: 2 }, steps: ['grind', 'froth'], price: 15, hot: true },
-  frappe: { id: 'frappe', name: 'Nip Frappé', parts: { espresso: 1, milk: 1, catnip: 1, ice: 2 }, steps: ['grind'], price: 17, hot: false },
-  nipMocha: { id: 'nipMocha', name: 'Midnight Nip Brew', parts: { espresso: 2, milk: 1, catnip: 1 }, steps: ['grind', 'froth'], price: 19, hot: true },
+  espresso: r('espresso', 'Purrspresso', ['espresso', 'steam'], [], 7),
+  saucer: r('saucer', 'Warm Milk Saucer', ['milk', 'steam'], [], 6),
+  icedShot: r('icedShot', 'Iced Shot', ['espresso', 'ice'], [], 7),
+  latte: r('latte', 'Fluffy Latte', ['espresso', 'steam', 'milk'], ['froth'], 12),
+  icedLatte: r('icedLatte', 'Iced Whisker Latte', ['espresso', 'ice', 'milk'], [], 11),
+  nipLatte: r('nipLatte', 'Catnip Latte', ['milk', 'steam', 'catnip'], [], 11),
+  doppio: r('doppio', 'Double Paw Doppio', ['espresso', 'espresso', 'steam'], ['grind'], 12),
+  cappuccino: r('cappuccino', 'Catpuccino', ['espresso', 'steam', 'milk', 'milk'], ['grind', 'froth'], 17),
+  frappe: r('frappe', 'Nip Frappé', ['espresso', 'ice', 'milk', 'catnip'], [], 16),
+  nipFrost: r('nipFrost', 'Nip Frost', ['milk', 'ice', 'catnip', 'catnip'], [], 15),
+  nipMocha: r('nipMocha', 'Midnight Nip Brew', ['espresso', 'espresso', 'steam', 'milk', 'catnip'], ['grind', 'froth'], 22),
 };
 
-// Unlocked progressively by number of drinks served in the current shift.
+// Unlocked progressively by drinks served in the current shift.
 export const RECIPE_TIERS = [
-  { minServed: 0, ids: ['espresso', 'saucer', 'latte', 'icedShot'] },
-  { minServed: 4, ids: ['doppio', 'nipLatte', 'icedLatte'] },
-  { minServed: 9, ids: ['cappuccino', 'frappe'] },
-  { minServed: 16, ids: ['nipMocha'] },
+  { minServed: 0, ids: ['espresso', 'saucer', 'icedShot'] },
+  { minServed: 3, ids: ['latte', 'icedLatte', 'nipLatte'] },
+  { minServed: 7, ids: ['doppio', 'frappe', 'nipFrost'] },
+  { minServed: 12, ids: ['cappuccino'] },
+  { minServed: 18, ids: ['nipMocha'] },
 ];
 
+// Base patience is deliberately tight; the game adds time per sequence step.
 export const SPECIES = {
-  cat: { id: 'cat', emoji: '🐱', names: ['Mittens', 'Socks', 'Clawdia', 'Purrcy', 'Nyanko'], patience: 16000, voice: 'meow' },
-  dog: { id: 'dog', emoji: '🐶', names: ['Biscuit', 'Waffles', 'Sir Barksalot', 'Pudding'], patience: 20000, voice: 'woof' },
-  fox: { id: 'fox', emoji: '🦊', names: ['Ember', 'Rusty', 'Vixy', 'Sly Sam'], patience: 13000, voice: 'yip' },
-  bunny: { id: 'bunny', emoji: '🐰', names: ['Clover', 'Hopscotch', 'Mochi'], patience: 15000, voice: 'squeak' },
-  bear: { id: 'bear', emoji: '🐻', names: ['Bruno', 'Honey', 'Big Ted'], patience: 22000, voice: 'woof' },
+  cat: { id: 'cat', emoji: '🐱', names: ['Mittens', 'Socks', 'Clawdia', 'Purrcy', 'Nyanko'], patience: 12500, voice: 'meow' },
+  dog: { id: 'dog', emoji: '🐶', names: ['Biscuit', 'Waffles', 'Sir Barksalot', 'Pudding'], patience: 15000, voice: 'woof' },
+  fox: { id: 'fox', emoji: '🦊', names: ['Ember', 'Rusty', 'Vixy', 'Sly Sam'], patience: 10000, voice: 'yip' },
+  bunny: { id: 'bunny', emoji: '🐰', names: ['Clover', 'Hopscotch', 'Mochi'], patience: 11500, voice: 'squeak' },
+  bear: { id: 'bear', emoji: '🐻', names: ['Bruno', 'Honey', 'Big Ted'], patience: 17000, voice: 'woof' },
+};
+
+// Troublemakers. drain = patience drain multiplier; aura = extra drain inflicted on neighbours.
+export const TRAITS = {
+  impatient: { id: 'impatient', label: 'Impatient', icon: '⚡', drain: 1.6, aura: 0.45, desc: 'Drains fast and riles up neighbours.' },
+  indecisive: { id: 'indecisive', label: 'Indecisive', icon: '❓', changeAt: 0.55, desc: 'Changes their order halfway through.' },
 };
 
 export const VIPS = [
@@ -44,7 +56,7 @@ export const VIPS = [
     name: 'Duchess Bamboo',
     emoji: '🐼',
     title: 'Panda Aristocrat',
-    recipe: { id: 'vip_bamboo', name: 'Bamboo Royale', parts: { espresso: 2, milk: 1, catnip: 1 }, steps: ['grind', 'froth'], price: 30, hot: true },
+    recipe: { id: 'vip_bamboo', name: 'Bamboo Royale', seq: ['espresso', 'espresso', 'steam', 'milk', 'catnip'], steps: ['grind', 'froth'], price: 34, hot: true },
     lore: 'Heiress to the Misty Peak tea fortune, the Duchess secretly prefers coffee. She tips in gold leaf and rates every café on a 1000-point scale. Nobody has ever scored above 998.',
   },
   {
@@ -52,7 +64,7 @@ export const VIPS = [
     name: 'Chef Dumpling',
     emoji: '🐼',
     title: 'Panda Pastry Legend',
-    recipe: { id: 'vip_dumpling', name: 'Dumpling Cloud Latte', parts: { espresso: 1, milk: 2, ice: 1 }, steps: ['froth'], price: 26, hot: false },
+    recipe: { id: 'vip_dumpling', name: 'Dumpling Cloud Latte', seq: ['espresso', 'ice', 'milk', 'milk'], steps: ['froth'], price: 30, hot: false },
     lore: 'Ran a 3-star bakery for 40 years, then retired to taste-test every latte in the city. Carries a tiny notebook. If he nods once, your café is famous by morning.',
   },
   {
@@ -60,7 +72,7 @@ export const VIPS = [
     name: 'Shadow Paw',
     emoji: '🐼',
     title: 'Panda Night Ninja',
-    recipe: { id: 'vip_ninja', name: 'Silent Midnight', parts: { espresso: 3, catnip: 1 }, steps: ['grind', 'froth'], price: 34, hot: true },
+    recipe: { id: 'vip_ninja', name: 'Silent Midnight', seq: ['espresso', 'espresso', 'espresso', 'steam', 'catnip'], steps: ['grind'], price: 36, hot: true },
     lore: 'Only visits after dark. Pays in exact change that appears on the counter while you blink. Rumour says Shadow Paw once protected the city’s last bean harvest from the Weasel Syndicate.',
   },
   {
@@ -68,7 +80,7 @@ export const VIPS = [
     name: 'Cosmo Whiskerton',
     emoji: '😼',
     title: 'Astronaut Cat',
-    recipe: { id: 'vip_astro', name: 'Zero-G Frappé', parts: { espresso: 1, milk: 1, catnip: 1, ice: 2 }, steps: ['grind'], price: 28, hot: false },
+    recipe: { id: 'vip_astro', name: 'Zero-G Frappé', seq: ['espresso', 'ice', 'ice', 'milk', 'catnip'], steps: ['grind'], price: 32, hot: false },
     lore: 'The first cat to nap on the Moon. Came back with a craving for “coffee that floats.” Insists ice cubes be dropped from exactly one paw-length up.',
   },
   {
@@ -76,7 +88,7 @@ export const VIPS = [
     name: 'Professor Hoot',
     emoji: '🦉',
     title: 'Nocturnal Scholar',
-    recipe: { id: 'vip_owl', name: 'Thesis Fuel', parts: { espresso: 2, milk: 2 }, steps: ['grind', 'froth'], price: 30, hot: true },
+    recipe: { id: 'vip_owl', name: 'Thesis Fuel', seq: ['espresso', 'espresso', 'steam', 'milk', 'milk'], steps: ['grind', 'froth'], price: 34, hot: true },
     lore: 'Has been writing the same dissertation on “The Physics of Purring” for 87 years. Drinks exactly one cup per chapter. Currently on chapter 2,914.',
   },
   {
@@ -84,7 +96,7 @@ export const VIPS = [
     name: 'Sparkle Hooves',
     emoji: '🦄',
     title: 'Mythical Influencer',
-    recipe: { id: 'vip_unicorn', name: 'Rainbow Nip Swirl', parts: { milk: 2, catnip: 2, ice: 1 }, steps: ['froth'], price: 36, hot: false },
+    recipe: { id: 'vip_unicorn', name: 'Rainbow Nip Swirl', seq: ['milk', 'ice', 'milk', 'catnip', 'catnip'], steps: ['froth'], price: 38, hot: false },
     lore: '12 million followers. Every drink photographed from 40 angles before the first sip. A single post can double your foot traffic. Allergic to beige.',
   },
 ];
@@ -95,6 +107,8 @@ export const UPGRADES = {
   pastries: { id: 'pastries', name: 'Free Pastries', emoji: '🥐', desc: '+12% customer patience per level.', costs: [70, 200, 480], max: 3 },
   tipjar: { id: 'tipjar', name: 'Golden Tip Jar', emoji: '🫙', desc: '+20% tips per level.', costs: [100, 260, 600], max: 3 },
   hearts: { id: 'hearts', name: 'Comfy Cushions', emoji: '🛋️', desc: '+1 starting life per level.', costs: [250, 700], max: 2 },
+  pantry: { id: 'pantry', name: 'Bigger Pantry Trays', emoji: '🧺', desc: '+2 portions in every ingredient tray.', costs: [90, 260, 560], max: 3 },
+  quickpaws: { id: 'quickpaws', name: 'Quick Paws', emoji: '🐾', desc: 'Restocking takes 0.5s less per level.', costs: [120, 320], max: 2 },
 };
 
 // kind: wallpaper | neon | hat | glasses. bonus = permanent coin multiplier while owned.
@@ -155,3 +169,9 @@ export const WEATHER_CYCLE = ['morning', 'afternoon', 'rainy', 'night'];
 export const FEVER_DURATION = 10000;
 export const FEVER_MULT = 3;
 export const BASE_LIVES = 3;
+
+// Strategic pressure
+export const BASE_STOCK = 5; // portions per tray
+export const RESTOCK_MS = 2600; // whole tray is locked while the barista fetches supplies
+export const SEAT_UNLOCKS = [0, 4, 12]; // drinks served before 2nd / 3rd station opens
+export const RUSH = { firstAt: 30000, every: 50000, duration: 15000, patience: 0.85, tips: 1.5 };

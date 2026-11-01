@@ -1,7 +1,7 @@
 // Persistent tycoon state (coins, upgrades, items, cats, VIP album, settings)
 // stored in localStorage, plus derived bonuses and passive "Purr Power" income.
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
-import { HUNGER_HOURS, ITEMS, OFFLINE_CAP_HOURS, RESCUE_CATS, UPGRADES } from './data';
+import { BASE_STOCK, HUNGER_HOURS, ITEMS, OFFLINE_CAP_HOURS, RESCUE_CATS, RESTOCK_MS, UPGRADES } from './data';
 import { setHapticsEnabled } from '../hooks/haptics';
 import { audio } from '../audio/engine';
 
@@ -12,7 +12,7 @@ const DEFAULT_SAVE = {
   highScore: 0,
   bestCombo: 0,
   totalServed: 0,
-  upgrades: { grinder: 0, frother: 0, pastries: 0, tipjar: 0, hearts: 0 },
+  upgrades: { grinder: 0, frother: 0, pastries: 0, tipjar: 0, hearts: 0, pantry: 0, quickpaws: 0 },
   owned: ['wp_cream'],
   equipped: { wallpaper: 'wp_cream', neon: null, hat: null, glasses: null },
   cats: [], // [{ id, fedAt, adoptedAt }]
@@ -252,6 +252,8 @@ export function GameProvider({ children }) {
       tipMult: 1 + save.upgrades.tipjar * 0.2,
       patienceMult: 1 + save.upgrades.pastries * 0.12,
       lives: 3 + save.upgrades.hearts,
+      stockCap: BASE_STOCK + (save.upgrades.pantry || 0) * 2,
+      restockMs: RESTOCK_MS - (save.upgrades.quickpaws || 0) * 500,
     };
   }, [save.owned, save.cats, save.upgrades, save.gardenPending]); // gardenPending ticks each second -> keeps hunger fresh
 

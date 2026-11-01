@@ -7,10 +7,10 @@ export const LIQUID = {
   espresso: { top: '#8a4a1f', bottom: '#2b1206', glow: 'rgba(160,90,40,0.55)', surface: '#c47a3c', particle: '#7a3f1a' },
   milk: { top: '#fffdf6', bottom: '#eedfc4', glow: 'rgba(255,250,235,0.7)', surface: '#ffffff', particle: '#fff8ec' },
   catnip: { top: '#b4f58a', bottom: '#3d9e2e', glow: 'rgba(130,240,110,0.65)', surface: '#d6ffb8', particle: '#72d25f' },
+  steam: { top: '#ffcfb8', bottom: '#ff9a7a', glow: 'rgba(255,140,90,0.7)', surface: '#ffe6d8', particle: '#ff9a6a' },
   ice: { top: 'rgba(235,250,255,0.9)', bottom: 'rgba(150,215,245,0.85)', glow: 'rgba(170,230,255,0.7)', surface: '#ffffff', particle: '#bfeaff' },
 };
 
-const INNER_H = 82;
 
 function Layer({ id, height, isTop }) {
   const c = LIQUID[id];
@@ -42,6 +42,13 @@ function Layer({ id, height, isTop }) {
           ))}
         </div>
       )}
+      {id === 'steam' && (
+        <div className="absolute inset-0 flex items-center justify-center gap-2">
+          {[0, 1, 2].map((i) => (
+            <motion.span key={i} className="block h-[70%] w-[3px] rounded-full bg-white/70" animate={{ scaleY: [0.6, 1, 0.6], x: [0, 2, 0] }} transition={{ duration: 0.8, repeat: Infinity, delay: i * 0.2 }} />
+          ))}
+        </div>
+      )}
       {isTop && (
         <motion.svg viewBox="0 0 200 12" preserveAspectRatio="none" className="absolute -top-[5px] left-0 h-[8px] w-[200%]" animate={{ x: ['0%', '-50%'] }} transition={{ duration: 2.2, repeat: Infinity, ease: 'linear' }}>
           <path d="M0 6 Q12.5 0 25 6 T50 6 T75 6 T100 6 T125 6 T150 6 T175 6 T200 6 V12 H0 Z" fill={c.top} />
@@ -52,37 +59,60 @@ function Layer({ id, height, isTop }) {
   );
 }
 
-const Cup = forwardRef(function Cup({ layers, totalParts, hover, ready, fever, shakeKey, onServeDrop, onServeDrag }, ref) {
-  const per = totalParts > 0 ? INNER_H / totalParts : 0;
+const Cup = forwardRef(function Cup(
+  { layers, totalParts, hover, ready, fever, shakeKey, onServeDrop, onServeDrag, onTap, ruined, selected, dumping, w = 84, h = 94 },
+  ref
+) {
+  const innerH = h - 12;
+  const per = totalParts > 0 ? innerH / Math.max(totalParts, layers.length) : 0;
   return (
-    <motion.div key={shakeKey} animate={shakeKey ? { x: [0, -14, 14, -10, 10, -4, 0], rotate: [0, -6, 6, -3, 0] } : undefined} transition={{ duration: 0.45 }} className="relative">
+    <motion.div
+      key={shakeKey}
+      animate={dumping ? { rotate: -110, x: -30, y: 10, opacity: 0 } : shakeKey ? { x: [0, -14, 14, -10, 10, -4, 0], rotate: [0, -6, 6, -3, 0] } : { rotate: 0, x: 0, y: 0, opacity: 1 }}
+      transition={{ duration: dumping ? 0.4 : 0.45 }}
+      className="relative"
+    >
       <motion.div
         ref={ref}
         drag={ready}
         dragSnapToOrigin
         dragMomentum={false}
         whileDrag={{ scale: 1.15, rotate: 6 }}
+        onTap={() => onTap?.()}
         onDrag={(_, info) => ready && onServeDrag?.({ x: info.point.x - window.scrollX, y: info.point.y - window.scrollY })}
         onDragEnd={(_, info) => ready && onServeDrop({ x: info.point.x - window.scrollX, y: info.point.y - window.scrollY })}
         animate={{ scale: hover ? 1.14 : ready ? [1, 1.06, 1] : 1, y: hover ? -4 : 0 }}
         transition={ready ? { repeat: Infinity, duration: 0.9 } : { type: 'spring', stiffness: 400, damping: 18 }}
-        className={`relative h-[94px] w-[84px] touch-none ${ready ? 'cursor-grab' : ''}`}
-        style={{ touchAction: 'none' }}
+        className={`relative touch-none ${ready ? 'cursor-grab' : 'cursor-pointer'}`}
+        style={{ touchAction: 'none', width: w, height: h }}
       >
         {/* halo */}
         <div
           className="absolute -inset-5 rounded-full blur-xl transition-opacity duration-200"
           style={{
-            opacity: hover || ready || fever ? 0.85 : 0,
-            background: hover ? 'radial-gradient(circle, #9fe3c6, transparent 70%)' : 'radial-gradient(circle, #ffd23f, transparent 70%)',
+            opacity: hover || ready || fever || ruined ? 0.85 : 0,
+            background: ruined
+              ? 'radial-gradient(circle, #e8657a, transparent 70%)'
+              : hover
+                ? 'radial-gradient(circle, #9fe3c6, transparent 70%)'
+                : 'radial-gradient(circle, #ffd23f, transparent 70%)',
           }}
         />
+        {/* selection ring on the mat */}
+        {selected && (
+          <motion.div
+            className="absolute -bottom-3 left-1/2 h-5 w-[130%] rounded-[50%] border-[3px] border-gold-300"
+            style={{ x: '-50%', boxShadow: '0 0 12px #ffd23f' }}
+            animate={{ opacity: [0.6, 1, 0.6] }}
+            transition={{ duration: 1, repeat: Infinity }}
+          />
+        )}
         {/* saucer shadow */}
         <div className="absolute -bottom-2 left-1/2 h-4 w-[120%] -translate-x-1/2 rounded-[50%] bg-black/30 blur-[3px]" />
         {/* handle */}
-        <div className="absolute right-[-18px] top-6 h-[44px] w-[26px] rounded-r-[20px] border-[6px] border-l-0 border-white/80 shadow-[2px_2px_4px_rgba(0,0,0,0.25)]" />
+        <div className="absolute right-[-16px] top-[22%] h-[46%] w-[24px] rounded-r-[18px] border-[6px] border-l-0 border-white/80 shadow-[2px_2px_4px_rgba(0,0,0,0.25)]" />
         {/* glass body */}
-        <div className="absolute inset-0 overflow-hidden rounded-b-[32px] rounded-t-[10px] border-[5px] border-white/85 bg-white/20 shadow-[inset_0_-8px_14px_rgba(0,0,0,0.15),0_6px_14px_-6px_rgba(0,0,0,0.5)] backdrop-blur-[2px]">
+        <div className="absolute inset-0 overflow-hidden rounded-b-[30px] rounded-t-[10px] border-[5px] border-white/85 bg-white/20 shadow-[inset_0_-8px_14px_rgba(0,0,0,0.15),0_6px_14px_-6px_rgba(0,0,0,0.5)] backdrop-blur-[2px]">
           <div className="absolute inset-x-0 bottom-0 flex flex-col-reverse">
             <AnimatePresence>
               {layers.map((id, i) => (
@@ -90,11 +120,45 @@ const Cup = forwardRef(function Cup({ layers, totalParts, hover, ready, fever, s
               ))}
             </AnimatePresence>
           </div>
+          {ruined && (
+            <motion.div
+              className="absolute inset-0"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              style={{ background: 'linear-gradient(180deg, rgba(110,120,80,.55), rgba(70,60,40,.85))' }}
+            >
+              {[20, 50, 75].map((l, i) => (
+                <motion.span
+                  key={l}
+                  className="absolute bottom-2 h-2 w-2 rounded-full bg-[#9aa36b]"
+                  style={{ left: `${l}%` }}
+                  animate={{ y: [0, -20], opacity: [1, 0], scale: [0.6, 1.3] }}
+                  transition={{ duration: 1.2, repeat: Infinity, delay: i * 0.3 }}
+                />
+              ))}
+              <div className="absolute inset-0 grid place-items-center font-display text-[22px] text-berry-300 drop-shadow-[0_2px_0_#3f2214]">✗</div>
+            </motion.div>
+          )}
           {/* glass shine */}
           <div className="absolute left-2 top-3 h-[68%] w-2.5 rounded-full bg-gradient-to-b from-white/80 to-white/10" />
           <div className="absolute right-3 top-4 h-5 w-1.5 rounded-full bg-white/50" />
         </div>
-        {ready && (
+        {ruined && (
+          <div className="pointer-events-none absolute -top-6 left-1/2 -translate-x-1/2">
+            {[0, 1, 2].map((i) => (
+              <motion.span
+                key={i}
+                className="absolute block font-display text-sm text-[#9aa36b]"
+                style={{ left: (i - 1) * 12 }}
+                animate={{ y: [6, -10], opacity: [0, 1, 0], rotate: [0, 20, -20] }}
+                transition={{ duration: 1.4, repeat: Infinity, delay: i * 0.45 }}
+              >
+                ~
+              </motion.span>
+            ))}
+          </div>
+        )}
+        {ready && !ruined && (
           <div className="absolute -top-8 left-1/2 -translate-x-1/2">
             {[0, 1, 2].map((i) => (
               <motion.span

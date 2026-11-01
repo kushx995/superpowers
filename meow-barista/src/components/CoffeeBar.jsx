@@ -1,18 +1,22 @@
-// The café shift: customer queue, ingredient assembly, QTE crafting, serving,
-// combo/Fever system, weather cycle, lives and scoring.
-import { useCallback, useEffect, useRef, useState } from 'react';
+// The café shift. Overcooked-style juggling: up to three brewing stations (one per
+// counter seat), STRICT recipe sequences that ruin the cup on a wrong step, limited
+// ingredient stock with a risky Restock, troublemaker customers, rush hours, plus
+// QTE crafting, combo/Fever, weather and lives. Pure rules live in game/engine.js.
+import { createRef, useCallback, useEffect, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
+import { FEVER_DURATION, FEVER_MULT, INGREDIENTS, INGREDIENT_ORDER, ITEMS, RUSH, TRAITS, WEATHER } from '../game/data';
 import {
-  FEVER_DURATION,
-  FEVER_MULT,
-  INGREDIENTS,
-  ITEMS,
-  RECIPES,
-  RECIPE_TIERS,
-  SPECIES,
-  VIPS,
-  WEATHER,
-} from '../game/data';
+  drainFor,
+  emptyStation,
+  freshSession,
+  isComplete,
+  isPrefix,
+  makeCustomer,
+  payout,
+  pickRecipe,
+  qualityFor,
+  seatsFor,
+} from '../game/engine';
 import { useGame } from '../game/store';
 import { audio } from '../audio/engine';
 import { haptic, HAPTIC } from '../hooks/haptics';
@@ -23,89 +27,10 @@ import QTECrafting from './QTECrafting';
 import Customer from './Customer';
 import Cup, { LIQUID } from './Cup';
 import CafeScene, { EspressoMachine } from './CafeScene';
-import { Character, VIP_LOOKS, lookForSpecies } from './Avatars';
+import { Character } from './Avatars';
 import { CoinIcon, HeartIcon, TrashIcon, BellIcon } from './Icons';
 
 const TICK = 100;
-const TIP_RATE = { PERFECT: 0.8, GOOD: 0.35, MISS: 0 };
-const RANK = { PERFECT: 2, GOOD: 1, MISS: 0 };
-const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
-const sumParts = (parts) => Object.values(parts).reduce((a, b) => a + b, 0);
-
-function freshSession(lives) {
-  return {
-    status: 'ready',
-    paused: false,
-    lives,
-    maxLives: lives,
-    score: 0,
-    coins: 0,
-    served: 0,
-    perfects: 0,
-    combo: 0,
-    maxCombo: 0,
-    fever: 0,
-    feverLeft: 0,
-    weather: 'morning',
-    weatherLeft: WEATHER.morning.duration,
-    customer: null,
-    queue: [],
-    cup: {},
-    layers: [],
-    phase: 'assemble',
-    stageResults: [],
-    customerCount: 0,
-    arrivingIn: 600,
-    outcome: 'happy',
-    orderToken: 0,
-    vipsServed: [],
-    newRecord: false,
-  };
-}
-
-function unlockedRecipes(served) {
-  return RECIPE_TIERS.filter((t) => served >= t.minServed).flatMap((t) => t.ids.map((id) => RECIPES[id]));
-}
-
-function makeCustomer(g, bonuses, album) {
-  const w = WEATHER[g.weather];
-  const count = g.customerCount;
-  const vipChance = count >= 4 ? 0.07 + w.vipBoost : 0;
-  const forcedVip = count > 0 && count % 11 === 10;
-  const difficulty = Math.max(0.55, 1 - g.served * 0.014);
-
-  if (forcedVip || Math.random() < vipChance) {
-    const unseen = VIPS.filter((v) => !album.includes(v.id));
-    const vip = unseen.length && Math.random() < 0.75 ? pick(unseen) : pick(VIPS);
-    const recipe = vip.recipe;
-    const patienceMax =
-      (26000 + recipe.steps.length * 3500 + sumParts(recipe.parts) * 800) * w.patience * bonuses.patienceMult * Math.max(0.7, difficulty);
-    return { uid: Math.random(), emoji: vip.emoji, look: VIP_LOOKS[vip.id] || 'panda', name: vip.name, voice: 'meow', vip, recipe, patienceMax, patience: patienceMax };
-  }
-
-  const species = pick(Object.values(SPECIES));
-  const pool = unlockedRecipes(g.served);
-  const wantHot = Math.random() < w.hotBias;
-  const filtered = pool.filter((r) => r.hot === wantHot);
-  const options = filtered.length ? filtered : pool;
-  // avoid serving the same drink three times in a row
-  const fresh = options.filter((r) => r.id !== g.lastRecipeId);
-  const recipe = pick(fresh.length && Math.random() < 0.8 ? fresh : options);
-  g.lastRecipeId = recipe.id;
-  const patienceMax =
-    (species.patience + recipe.steps.length * 3500 + sumParts(recipe.parts) * 700) * w.patience * bonuses.patienceMult * difficulty;
-  return {
-    uid: Math.random(),
-    emoji: species.emoji,
-    look: lookForSpecies(species.id),
-    name: pick(species.names),
-    voice: species.voice,
-    vip: null,
-    recipe,
-    patienceMax,
-    patience: patienceMax,
-  };
-}
 
 function Hearts({ lives, max }) {
   return (
@@ -142,7 +67,7 @@ function FeverGauge({ value, feverLeft, combo }) {
         {combo > 1 && (
           <motion.div
             key={combo}
-            initial={{ scale: 2, rotate: -20, opacity: 0 }}
+            initial={{ scale: 1.5, rotate: -20, opacity: 0 }}
             animate={{ scale: 1, rotate: -4, opacity: 1 }}
             exit={{ opacity: 0 }}
             className="btn btn-berry px-2.5 py-0.5 font-display text-sm"
@@ -167,34 +92,98 @@ function BossCat({ hat, glasses, fever, mood }) {
 export default function CoffeeBar({ active, shake }) {
   const { save, bonuses, addCoins, unlockVip, recordShift, finishTutorial } = useGame();
   const { burst, floatText, splash, ripple } = useParticles();
-  const g = useRef(freshSession(bonuses.lives));
+  const g = useRef(freshSession(bonuses.lives, bonuses.stockCap));
   const [, setFrame] = useState(0);
   const rerender = useCallback(() => setFrame((f) => (f + 1) % 1e9), []);
-  const [hoverCup, setHoverCup] = useState(false);
-  const [cupShake, setCupShake] = useState(0);
+  const [hoverCup, setHoverCup] = useState(-1);
+  const [cupShake, setCupShake] = useState([0, 0, 0]);
   const [bossMood, setBossMood] = useState('idle');
   const [toast, setToast] = useState(null);
   const [banner, setBanner] = useState(null);
-  const cupRef = useRef(null);
-  const customerRef = useRef(null);
+  const cupRefs = useRef([createRef(), createRef(), createRef()]).current;
+  const custRefs = useRef([createRef(), createRef(), createRef()]).current;
   const counterRef = useRef(null);
   const latest = useRef({});
-  latest.current = { save, bonuses };
+  latest.current = { save, bonuses, shake };
 
   const s = g.current;
   const inFever = s.feverLeft > 0;
-  const showHints = !save.tutorialDone && s.served < 3;
+  const playing = s.status === 'playing';
+  const showHints = (!save.tutorialDone && s.served < 3) || inFever;
 
-  // ───────── helpers ─────────
+  // ───────── small helpers ─────────
   const flashBoss = (mood) => {
     setBossMood(mood);
     setTimeout(() => setBossMood('idle'), 900);
   };
-
   const showToast = (t) => {
     setToast(t);
     setTimeout(() => setToast((cur) => (cur === t ? null : cur)), 2600);
   };
+  const cupCenter = (i) => centerOf(cupRefs[i].current);
+  const custCenter = (i) => centerOf(custRefs[i].current || counterRef.current);
+
+  /** A station is "accepting" when it can take the next ingredient. */
+  const accepting = (st, i) => {
+    const c = st.customers[i];
+    const sta = st.stations[i];
+    return i < st.seats && !!c && sta.phase === 'assemble' && !sta.ruined && !sta.dumping;
+  };
+  const selectNextActive = (st) => {
+    if (accepting(st, st.active)) return;
+    for (let i = 0; i < st.seats; i++) {
+      if (accepting(st, i)) {
+        st.active = i;
+        return;
+      }
+    }
+  };
+
+  /** Recompute a station's phase after its customer or order changed. Mismatched cups get ruined. */
+  const revalidate = (st, i, blame) => {
+    const sta = st.stations[i];
+    const c = st.customers[i];
+    if (!c || sta.ruined || sta.layers.length === 0) {
+      if (!sta.ruined) sta.phase = 'assemble';
+      return;
+    }
+    if (!isPrefix(sta.layers, c.recipe.seq)) {
+      ruinStation(st, i, c.changed ? 'Order changed!' : 'Wrong drink for them!', blame);
+      return;
+    }
+    sta.stageResults = [];
+    sta.phase = isComplete(sta.layers, c.recipe.seq) ? (c.recipe.steps.length ? 'craft' : 'serve') : 'assemble';
+  };
+
+  // ───────── penalties ─────────
+  function ruinStation(st, i, reason, blame = true) {
+    const sta = st.stations[i];
+    sta.ruined = true;
+    sta.ruinReason = reason;
+    sta.phase = 'assemble';
+    sta.token++;
+    if (st.craftingStation === i) st.craftingStation = null;
+    st.ruinedCount++;
+    const c = st.customers[i];
+    if (blame) {
+      st.combo = 0;
+      st.fever = Math.max(0, st.fever - 25);
+      st.score = Math.max(0, st.score - 50);
+      if (c) {
+        c.patience -= c.patienceMax * 0.1;
+        c.react = 'sad';
+        c.reactUntil = Date.now() + 900;
+      }
+      latest.current.shake(8);
+      flashBoss('sad');
+    }
+    audio.error();
+    haptic(HAPTIC.error);
+    setCupShake((k) => k.map((v, j) => (j === i ? v + 1 : v)));
+    const p = cupCenter(i);
+    floatText(p.x, p.y - 40, reason, 'berry');
+    splash(p.x, p.y - 30, '#8a9160', { count: 14, spread: 70, glow: false });
+  }
 
   const startFever = useCallback(() => {
     const st = g.current;
@@ -203,24 +192,28 @@ export default function CoffeeBar({ active, shake }) {
     audio.setFever(true);
     audio.feverStart();
     haptic(HAPTIC.fever);
-    shake(14);
+    latest.current.shake(14);
     const c = centerOf(counterRef.current);
     burst(c.x, c.y, { emojis: ['🔥', '⭐', '✨', '💛'], count: 24, spread: 180 });
     floatText(c.x, c.y - 40, 'FEVER MODE!', 'gold', true);
     ripple(c.x, c.y, '#ffd23f', 6);
     ripple(c.x, c.y, '#ff4fd8', 4);
-    // instant brewing: finish any in-progress craft immediately
-    if (st.phase === 'craft') {
-      st.stageResults = st.customer.recipe.steps.map(() => 'PERFECT');
-      st.phase = 'serve';
-      st.orderToken++;
-    }
-  }, [burst, floatText, ripple, shake]);
+    // instant brewing: every in-progress craft completes immediately
+    st.stations.forEach((sta, i) => {
+      if (sta.phase === 'craft' && st.customers[i]) {
+        sta.stageResults = st.customers[i].recipe.steps.map(() => 'PERFECT');
+        sta.phase = 'serve';
+        sta.token++;
+      }
+    });
+    st.craftingStation = null;
+  }, [burst, floatText, ripple]);
 
   const endShift = useCallback(() => {
     const st = g.current;
     st.status = 'over';
     st.feverLeft = 0;
+    st.craftingStation = null;
     audio.setFever(false);
     audio.gameOver();
     st.newRecord = recordShift({ score: st.score, combo: st.maxCombo, served: st.served });
@@ -228,53 +221,74 @@ export default function CoffeeBar({ active, shake }) {
     rerender();
   }, [recordShift, finishTutorial, rerender]);
 
-  const customerLeaves = useCallback(() => {
-    const st = g.current;
-    if (!st.customer) return;
-    st.outcome = 'angry';
-    st.customer.outcome = 'angry';
-    st.customer = null;
-    st.cup = {};
-    st.layers = [];
-    st.phase = 'assemble';
-    st.stageResults = [];
-    st.orderToken++;
+  const arrivalDelay = (st, i) => {
+    if (st.feverLeft > 0) return 250;
+    if (st.rushLeft > 0) return 300 + i * 150;
+    return (st.weather === 'rainy' ? 1000 : 1700) + Math.random() * 900;
+  };
+
+  const customerLeaves = (st, i) => {
+    const c = st.customers[i];
+    if (!c) return;
+    c.outcome = 'angry';
+    st.customers[i] = null;
+    if (st.craftingStation === i) {
+      st.craftingStation = null;
+      st.stations[i].token++;
+      st.stations[i].phase = 'assemble';
+    }
     st.combo = 0;
+    st.fever = Math.max(0, st.fever * 0.6);
     st.lives -= 1;
-    st.arrivingIn = 900;
+    st.arriveIn[i] = arrivalDelay(st, i) + 600;
     audio.lifeLost();
     audio.voice('woof', 0.7);
     haptic(HAPTIC.lifeLost);
-    shake(10);
+    latest.current.shake(10);
     flashBoss('sad');
-    const c = centerOf(customerRef.current || counterRef.current);
-    floatText(c.x, c.y, 'Too slow! -1 ♥', 'berry');
-    burst(c.x, c.y, { emojis: ['💢', '💔'], count: 6 });
+    const p = custCenter(i);
+    floatText(p.x, p.y, 'Walked out! -1 ♥', 'berry');
+    burst(p.x, p.y, { emojis: ['💢', '💔'], count: 6 });
+    selectNextActive(st);
     if (st.lives <= 0) endShift();
-  }, [burst, floatText, shake, endShift]);
+  };
 
-  const spawnCustomer = useCallback(() => {
-    const st = g.current;
+  const spawnCustomer = (st, i) => {
     const { bonuses: b, save: sv } = latest.current;
-    // keep a visible queue of upcoming customers at the door
     while (st.queue.length < 3) {
       st.customerCount++;
       st.queue.push(makeCustomer(st, b, sv.album));
     }
-    st.customer = st.queue.shift();
-    st.customer.outcome = 'happy';
-    st.cup = {};
-    st.layers = [];
-    st.phase = 'assemble';
-    st.stageResults = [];
-    st.orderToken++;
-    audio.voice(st.customer.voice, st.customer.vip ? 0.85 : 0.9 + Math.random() * 0.3);
-    if (st.customer.vip) {
+    const c = st.queue.shift();
+    c.outcome = 'happy';
+    st.customers[i] = c;
+    revalidate(st, i, false);
+    selectNextActive(st);
+    audio.voice(c.voice, c.vip ? 0.85 : 0.9 + Math.random() * 0.3);
+    if (c.vip) {
       audio.unlock_fanfare();
-      showToast(`⭐ VIP ${st.customer.name} has arrived!`);
+      showToast(`★ VIP ${c.name} has arrived!`);
       haptic(HAPTIC.perfect);
+    } else if (c.trait === 'impatient') {
+      showToast(`⚡ ${c.name} is IMPATIENT — and it's contagious!`);
     }
-  }, []);
+  };
+
+  const changeOrder = (st, i) => {
+    const c = st.customers[i];
+    const next = pickRecipe(st, c.recipe.id);
+    c.recipe = next;
+    c.changed = true;
+    c.patience = Math.min(c.patienceMax, c.patience + c.patienceMax * 0.22);
+    c.react = 'wow';
+    c.reactUntil = Date.now() + 900;
+    audio.voice(c.voice, 1.3);
+    haptic(HAPTIC.error);
+    const p = custCenter(i);
+    floatText(p.x, p.y - 30, 'Actually… new order!', 'sky');
+    revalidate(st, i, false);
+    selectNextActive(st);
+  };
 
   // ───────── main loop ─────────
   useEffect(() => {
@@ -282,7 +296,9 @@ export default function CoffeeBar({ active, shake }) {
       const st = g.current;
       if (st.status !== 'playing' || st.paused) return;
       const dt = TICK;
+      st.elapsed += dt;
 
+      // weather
       st.weatherLeft -= dt;
       if (st.weatherLeft <= 0) {
         st.weather = nextWeather(st.weather);
@@ -292,6 +308,7 @@ export default function CoffeeBar({ active, shake }) {
         audio.whoosh();
       }
 
+      // fever
       if (st.feverLeft > 0) {
         st.feverLeft -= dt;
         if (st.feverLeft <= 0) {
@@ -301,18 +318,68 @@ export default function CoffeeBar({ active, shake }) {
         }
       }
 
-      if (!st.customer) {
-        st.arrivingIn -= dt;
-        if (st.arrivingIn <= 0) spawnCustomer();
-      } else {
-        const drain = st.feverLeft > 0 ? 0.25 : st.phase === 'craft' ? 0.5 : 1;
-        st.customer.patience -= dt * drain;
-        if (st.customer.patience <= 0) customerLeaves();
+      // rush hour
+      if (st.served >= 4) {
+        if (st.rushLeft > 0) {
+          st.rushLeft -= dt;
+          if (st.rushLeft <= 0) {
+            st.rushLeft = 0;
+            showToast('Rush hour over. Breathe… and restock!');
+          }
+        } else {
+          st.nextRushIn -= dt;
+          if (st.nextRushIn <= 0) {
+            st.rushLeft = RUSH.duration;
+            st.nextRushIn = RUSH.every;
+            st.rushCount++;
+            st.arriveIn = st.arriveIn.map((v, i) => Math.min(v, 200 + i * 200));
+            audio.feverStart();
+            haptic(HAPTIC.fever);
+            latest.current.shake(9);
+            showToast(`🔔 RUSH HOUR! ×${RUSH.tips} tips — orders flooding in!`);
+          }
+        }
+      }
+
+      // restock
+      if (st.restockLeft > 0) {
+        st.restockLeft -= dt;
+        if (st.restockLeft <= 0) {
+          st.restockLeft = 0;
+          const cap = latest.current.bonuses.stockCap;
+          INGREDIENT_ORDER.forEach((k) => (st.stock[k] = cap));
+          audio.register();
+          haptic(HAPTIC.good);
+        }
+      }
+
+      // stations unlock
+      const seats = seatsFor(st.served);
+      if (seats > st.seats) {
+        st.seats = seats;
+        st.arriveIn[seats - 1] = 900;
+        audio.unlock_fanfare();
+        showToast(`New station unlocked! Juggle ${seats} orders at once`);
+      }
+
+      // customers
+      for (let i = 0; i < st.seats; i++) {
+        const c = st.customers[i];
+        if (!c) {
+          st.arriveIn[i] -= dt;
+          if (st.arriveIn[i] <= 0) spawnCustomer(st, i);
+          continue;
+        }
+        c.patience -= dt * drainFor(st, i);
+        if (c.trait === 'indecisive' && !c.changed && c.patience / c.patienceMax <= TRAITS.indecisive.changeAt) changeOrder(st, i);
+        if (c.patience <= 0) customerLeaves(st, i);
+        if (st.status !== 'playing') break;
       }
       rerender();
     }, TICK);
     return () => clearInterval(id);
-  }, [rerender, spawnCustomer, customerLeaves]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Pause when leaving the tab or backgrounding the page
   useEffect(() => {
@@ -338,7 +405,7 @@ export default function CoffeeBar({ active, shake }) {
     return () => document.removeEventListener('visibilitychange', onVis);
   }, [rerender]);
 
-  // ───────── actions ─────────
+  // ───────── player actions ─────────
   const startShift = () => {
     audio.unlock();
     audio.startMusic();
@@ -346,7 +413,7 @@ export default function CoffeeBar({ active, shake }) {
     audio.setMood('morning');
     audio.chime(true);
     haptic(HAPTIC.buy);
-    g.current = { ...freshSession(bonuses.lives), status: 'playing' };
+    g.current = { ...freshSession(bonuses.lives, bonuses.stockCap), status: 'playing' };
     setBanner({ id: Math.random(), weather: 'morning' });
     rerender();
   };
@@ -360,135 +427,143 @@ export default function CoffeeBar({ active, shake }) {
     rerender();
   };
 
-  const wrongIngredient = (id) => {
-    const st = g.current;
-    st.cup = {};
-    st.layers = [];
-    st.combo = 0;
-    st.customer.patience -= st.customer.patienceMax * 0.12;
-    audio.error();
-    haptic(HAPTIC.error);
-    shake(8);
-    setCupShake((k) => k + 1);
-    flashBoss('sad');
-    const c = centerOf(cupRef.current);
-    floatText(c.x, c.y - 30, `No ${INGREDIENTS[id].name}!`, 'berry');
-    splash(c.x, c.y - 30, LIQUID[id].particle, { count: 14, spread: 80, glow: false });
-    st.customer.react = 'sad';
-    st.customer.reactUntil = Date.now() + 900;
+  const nope = (i, text) => {
+    const p = cupCenter(i);
+    floatText(p.x, p.y - 50, text, 'sky');
+    audio.tap();
   };
 
-  const handleAdd = (id) => {
-      const st = g.current;
-      if (st.status !== 'playing' || st.paused || !st.customer || st.phase !== 'assemble') {
-        if (st.phase === 'serve') {
-          const c = centerOf(cupRef.current);
-          floatText(c.x, c.y - 50, 'Serve it!', 'sky');
-        }
-        return;
-      }
-      audio.unlock();
-      const recipe = st.customer.recipe;
-      const need = recipe.parts[id] || 0;
-      const have = st.cup[id] || 0;
-      if (have >= need) {
-        wrongIngredient(id);
-        rerender();
-        return;
-      }
+  const handleAdd = (id, target) => {
+    const st = g.current;
+    if (st.status !== 'playing' || st.paused || st.restockLeft > 0) return;
+    const i = target ?? st.active;
+    if (i >= st.seats) return;
+    const sta = st.stations[i];
+    const c = st.customers[i];
+    if (!c) return nope(i, 'No order here yet');
+    if (sta.dumping) return;
+    if (sta.ruined) return nope(i, 'Trash it first!');
+    if (sta.phase === 'serve') return nope(i, 'Serve it!');
+    if (sta.phase === 'craft') return nope(i, 'Tap the cup to craft');
+    if (st.stock[id] <= 0) return nope(i, 'Tray empty — restock!');
+    audio.unlock();
+    st.stock[id] -= 1;
+    st.active = i;
+    const seq = c.recipe.seq;
+    const expected = seq[sta.layers.length];
+    const p = cupCenter(i);
 
-      const c = centerOf(cupRef.current);
-      if (st.feverLeft > 0) {
-        // FEVER instant brewing: one correct drop fills the whole drink, QTEs auto-PERFECT
-        st.cup = { ...recipe.parts };
-        st.layers = Object.entries(recipe.parts).flatMap(([k, n]) => Array(n).fill(k));
-        st.stageResults = recipe.steps.map(() => 'PERFECT');
-        st.phase = 'serve';
-        audio.pour(id);
-        audio.chime(true);
-        burst(c.x, c.y, { emojis: ['⚡', '✨'], count: 8 });
-        splash(c.x, c.y - 40, '#ffd23f', { count: 16, spread: 90 });
-        ripple(c.x, c.y, '#ffd23f', 3);
-      } else {
-        st.cup = { ...st.cup, [id]: have + 1 };
-        st.layers = [...st.layers, id];
-        audio.pour(id);
-        splash(c.x, c.y - 40, LIQUID[id].particle, { count: 12, spread: 55 });
-        ripple(c.x, c.y - 10, LIQUID[id].particle, 2.4);
-        const complete = Object.entries(recipe.parts).every(([k, n]) => (st.cup[k] || 0) >= n);
-        if (complete) {
-          if (recipe.steps.length) {
-            st.phase = 'craft';
-            st.orderToken++;
-          } else {
-            st.phase = 'serve';
-          }
-          audio.chime(false);
-        }
-      }
-      haptic(HAPTIC.drop);
+    if (id !== expected) {
+      sta.layers = [...sta.layers, id];
+      audio.pour(id);
+      ruinStation(st, i, `Wrong step! Needed ${INGREDIENTS[expected].name}`, true);
+      selectNextActive(st);
       rerender();
-  };
+      return;
+    }
 
-  const handleCraftDone = (token) => (results) => {
-    const st = g.current;
-    if (token !== st.orderToken || st.phase !== 'craft') return; // stale (customer left / fever skipped)
-    st.stageResults = results;
-    st.phase = 'serve';
+    if (st.feverLeft > 0) {
+      // FEVER instant brewing: the correct next step fills the whole drink, QTEs auto-PERFECT
+      sta.layers = [...seq];
+      sta.stageResults = c.recipe.steps.map(() => 'PERFECT');
+      sta.phase = 'serve';
+      audio.pour(id);
+      audio.chime(true);
+      burst(p.x, p.y, { emojis: ['⚡', '✨'], count: 8 });
+      splash(p.x, p.y - 40, '#ffd23f', { count: 16, spread: 90 });
+      ripple(p.x, p.y, '#ffd23f', 3);
+    } else {
+      sta.layers = [...sta.layers, id];
+      audio.pour(id);
+      splash(p.x, p.y - 40, LIQUID[id].particle, { count: 12, spread: 55 });
+      ripple(p.x, p.y - 10, LIQUID[id].particle, 2.4);
+      if (isComplete(sta.layers, seq)) {
+        audio.chime(false);
+        if (c.recipe.steps.length) {
+          sta.phase = 'craft';
+          sta.token++;
+          if (st.craftingStation === null) st.craftingStation = i;
+        } else {
+          sta.phase = 'serve';
+        }
+      }
+    }
+    haptic(HAPTIC.drop);
+    selectNextActive(st);
     rerender();
   };
 
-  const handleStage = (result) => {
+  const dump = (i) => {
     const st = g.current;
-    const c = centerOf(cupRef.current);
+    const sta = st.stations[i];
+    if (sta.dumping || sta.layers.length === 0) return;
+    if (st.craftingStation === i) st.craftingStation = null;
+    sta.dumping = true;
+    audio.whoosh();
+    haptic(HAPTIC.tap);
+    rerender();
+    setTimeout(() => {
+      const cur = g.current;
+      if (cur !== st) return; // a new shift started meanwhile
+      const token = cur.stations[i].token + 1;
+      cur.stations[i] = { ...emptyStation(), token };
+      selectNextActive(cur);
+      rerender();
+    }, 420);
+  };
+
+  const handleCraftDone = (i, token) => (results) => {
+    const st = g.current;
+    const sta = st.stations[i];
+    if (token !== sta.token || sta.phase !== 'craft') return; // stale (customer left / order changed / fever)
+    sta.stageResults = results;
+    sta.phase = 'serve';
+    st.craftingStation = null;
+    rerender();
+  };
+
+  const handleStage = (i) => (result) => {
+    const st = g.current;
+    const p = cupCenter(i);
     if (result === 'PERFECT') {
-      burst(c.x, c.y, { emojis: ['⭐', '✨'], count: 10 });
-      // Perfect stages slightly charge Fever and speed prep (patience refund)
+      burst(p.x, p.y, { emojis: ['⭐', '✨'], count: 10 });
       if (st.feverLeft <= 0) st.fever = Math.min(100, st.fever + 4);
-      if (st.customer) st.customer.patience = Math.min(st.customer.patienceMax, st.customer.patience + 1500);
+      const c = st.customers[i];
+      if (c) c.patience = Math.min(c.patienceMax, c.patience + 1200);
     }
   };
 
-  const serve = () => {
+  const serve = (i) => {
     const st = g.current;
-    if (st.status !== 'playing' || st.paused || st.phase !== 'serve' || !st.customer) return;
+    const sta = st.stations[i];
+    const cust = st.customers[i];
+    if (st.status !== 'playing' || st.paused || sta.phase !== 'serve' || sta.ruined || !cust) return;
     const { bonuses: b, save: sv } = latest.current;
-    const cust = st.customer;
-    const w = WEATHER[st.weather];
-    const ratio = Math.max(0, cust.patience / cust.patienceMax);
-    let quality;
-    if (st.feverLeft > 0) quality = 'PERFECT';
-    else if (st.stageResults.length) quality = st.stageResults.reduce((a, r) => (RANK[r] < RANK[a] ? r : a), 'PERFECT');
-    else quality = ratio > 0.45 ? 'PERFECT' : 'GOOD';
-
-    const price = cust.recipe.price;
-    const tip = price * TIP_RATE[quality] * w.tips * b.tipMult * (0.5 + ratio);
-    const feverMult = st.feverLeft > 0 ? FEVER_MULT : 1;
-    const vipMult = cust.vip ? 2 : 1;
-    const coins = Math.max(1, Math.round((price + tip) * feverMult * b.coinMult * vipMult));
+    const quality = qualityFor(sta, cust, st.feverLeft > 0);
+    const coins = payout({ customer: cust, quality, g: st, bonuses: b, feverMult: st.feverLeft > 0 ? FEVER_MULT : 1 });
 
     if (quality === 'PERFECT') {
       st.combo += 1;
       st.perfects += 1;
     } else st.combo = 0;
     st.maxCombo = Math.max(st.maxCombo, st.combo);
-    st.score += coins * 10 + st.combo * 25;
+    st.score += coins * 10 + st.combo * 30 + cust.recipe.seq.length * 20;
     st.coins += coins;
     st.served += 1;
     addCoins(coins);
 
-    const c = centerOf(customerRef.current);
+    const p = custCenter(i);
     cust.quality = quality;
     cust.outcome = 'happy';
-    floatText(c.x, c.y - 20, `+${coins} Coins!`, 'gold', st.feverLeft > 0);
-    setTimeout(() => floatText(c.x, c.y + 30, quality === 'PERFECT' ? 'PERFECT!' : quality === 'GOOD' ? 'Good!' : 'Meh…', quality === 'PERFECT' ? 'mint' : 'gold'), 140);
-    ripple(c.x, c.y, quality === 'PERFECT' ? '#9fe3c6' : '#ffe27a', 3.5);
-    burst(c.x, c.y, { emojis: quality === 'PERFECT' ? ['💖', '🪙', '✨', '💕'] : ['🪙', '👍'], count: quality === 'PERFECT' ? 16 : 8, spread: 120 });
+    floatText(p.x, p.y - 20, `+${coins} Coins!`, 'gold', st.feverLeft > 0);
+    setTimeout(() => floatText(p.x, p.y + 30, quality === 'PERFECT' ? 'PERFECT!' : quality === 'GOOD' ? 'Good!' : 'Meh…', quality === 'PERFECT' ? 'mint' : 'gold'), 140);
+    ripple(p.x, p.y, quality === 'PERFECT' ? '#9fe3c6' : '#ffe27a', 3.5);
+    burst(p.x, p.y, { emojis: quality === 'PERFECT' ? ['💖', '🪙', '✨', '💕'] : ['🪙', '👍'], count: quality === 'PERFECT' ? 16 : 8, spread: 120 });
     audio.register();
     audio.voice(cust.voice, 1.15);
     if (quality === 'PERFECT') audio.coin();
     haptic(quality === 'PERFECT' ? HAPTIC.perfect : HAPTIC.good);
-    if (st.feverLeft > 0) shake(5);
+    if (st.feverLeft > 0) latest.current.shake(5);
     flashBoss('happy');
 
     if (cust.vip) {
@@ -501,62 +576,102 @@ export default function CoffeeBar({ active, shake }) {
     if (sv && !sv.tutorialDone && st.served >= 3) finishTutorial();
 
     if (st.feverLeft <= 0) {
-      const gain = quality === 'PERFECT' ? 12 + Math.min(st.combo, 5) * 2 : quality === 'GOOD' ? 5 : 0;
+      const gain = quality === 'PERFECT' ? 12 + Math.min(st.combo, 5) * 2 : quality === 'GOOD' ? 4 : 0;
       st.fever = Math.min(100, st.fever + gain);
       if (st.fever >= 100) startFever();
     }
 
-    st.outcome = 'happy';
-    st.customer = null;
-    st.cup = {};
-    st.layers = [];
-    st.phase = 'assemble';
-    st.stageResults = [];
-    st.orderToken++;
-    st.arrivingIn = st.feverLeft > 0 ? 150 : st.weather === 'rainy' ? 350 : 800;
+    st.customers[i] = null;
+    st.stations[i] = { ...emptyStation(), token: sta.token + 1 };
+    st.arriveIn[i] = arrivalDelay(st, i);
+    selectNextActive(st);
     rerender();
   };
 
-  const onServeDrop = (point) => {
-    const r = customerRef.current?.getBoundingClientRect();
-    const cupTop = cupRef.current?.getBoundingClientRect().top ?? 0;
-    // swipe the cup up toward the customer (or anywhere well above the station)
-    if ((r && point.y <= r.bottom + 30) || point.y < cupTop - 60) serve();
-  };
-
-  const trash = () => {
+  const tapCup = (i) => {
     const st = g.current;
-    if (st.phase !== 'assemble' || st.layers.length === 0) return;
-    st.cup = {};
-    st.layers = [];
-    audio.whoosh();
+    if (st.status !== 'playing' || st.paused) return;
+    const sta = st.stations[i];
+    if (sta.ruined) return dump(i);
+    if (sta.phase === 'serve') return serve(i);
+    if (sta.phase === 'craft') {
+      if (st.craftingStation === null && st.customers[i]) {
+        st.craftingStation = i;
+        audio.tap();
+        rerender();
+      }
+      return;
+    }
+    st.active = i;
+    audio.tap();
     haptic(HAPTIC.tap);
     rerender();
   };
 
+  const onServeDrop = (i) => (point) => {
+    const r = custRefs[i].current?.getBoundingClientRect();
+    const cupTop = cupRefs[i].current?.getBoundingClientRect().top ?? 0;
+    if ((r && point.y <= r.bottom + 30) || point.y < cupTop - 50) serve(i);
+  };
+
+  const restock = () => {
+    const st = g.current;
+    if (st.status !== 'playing' || st.paused || st.restockLeft > 0) return;
+    audio.unlock();
+    const cap = latest.current.bonuses.stockCap;
+    if (INGREDIENT_ORDER.every((k) => st.stock[k] >= cap)) {
+      floatText(window.innerWidth / 2, window.innerHeight - 160, 'Trays are full!', 'sky');
+      return;
+    }
+    st.restockLeft = latest.current.bonuses.restockMs;
+    audio.whoosh();
+    haptic(HAPTIC.drop);
+    rerender();
+  };
+
+  const closeCraft = () => {
+    const st = g.current;
+    st.craftingStation = null;
+    audio.tap();
+    rerender();
+  };
+
   // ───────── render ─────────
-  const cust = s.customer;
-  const remaining = cust ? Object.fromEntries(Object.entries(cust.recipe.parts).map(([k, n]) => [k, Math.max(0, n - (s.cup[k] || 0))])) : {};
-  const wpItem = ITEMS.find((i) => i.id === save.equipped.wallpaper);
+  const seats = s.seats;
+  const wpItem = ITEMS.find((it) => it.id === save.equipped.wallpaper);
   const wallpaper = !wpItem || wpItem.id === 'wp_cream' ? 'wp-cozy' : wpItem.preview;
-  const neon = ITEMS.find((i) => i.id === save.equipped.neon);
+  const neon = ITEMS.find((it) => it.id === save.equipped.neon);
   const hat = save.equipped.hat;
   const glasses = save.equipped.glasses;
-  const totalParts = cust ? sumParts(cust.recipe.parts) : 1;
-  const playing = s.status === 'playing';
-  const ready = playing && s.phase === 'serve';
+  const activeSta = s.stations[s.active];
+  const activeCust = s.customers[s.active];
+  const hint = showHints && activeCust && activeSta.phase === 'assemble' && !activeSta.ruined ? activeCust.recipe.seq[activeSta.layers.length] : null;
+  const crafting = s.craftingStation;
+  const craftCust = crafting !== null ? s.customers[crafting] : null;
+  const cupSize = seats === 1 ? { w: 80, h: 90 } : seats === 2 ? { w: 72, h: 82 } : { w: 62, h: 72 };
+  const seatStyle = (i) =>
+    seats === 1 ? { right: 0, width: '62%' } : { left: `${(i * 100) / seats}%`, width: `${100 / seats}%` };
 
-  const hint = !playing
+  const statusFor = (i) => {
+    const sta = s.stations[i];
+    const c = s.customers[i];
+    const tight = seats === 3;
+    if (sta.ruined) return { kind: 'ruined', text: tight ? 'Trash!' : 'Ruined! Trash it', tone: 'bg-berry-500 text-white' };
+    if (!c) return sta.layers.length ? { kind: 'leftover', text: tight ? 'Trash' : 'Leftover…', tone: 'bg-black/25 text-cream/70' } : { kind: 'waiting', text: tight ? '…' : 'Waiting…', tone: 'bg-black/25 text-cream/70' };
+    if (sta.phase === 'serve') return { kind: 'ready', text: tight ? 'Serve!' : 'Ready! Serve', tone: 'bg-mint-500 text-white' };
+    if (sta.phase === 'craft') return { kind: 'craft', text: crafting === i ? (tight ? '…' : 'Crafting…') : tight ? 'Craft' : 'Tap to craft', tone: 'bg-sky-500 text-white' };
+    return { kind: 'step', text: tight ? `${sta.layers.length + 1}/${c.recipe.seq.length}` : `Step ${sta.layers.length + 1}/${c.recipe.seq.length}`, tone: s.active === i ? 'bg-gold-400 text-roast-900' : 'bg-black/25 text-cream' };
+  };
+
+  const hintText = !playing
     ? ''
-    : s.phase === 'serve'
-      ? 'Swipe the cup to the customer — or ring the bell!'
-      : s.phase === 'craft'
-        ? ''
-        : inFever
-          ? 'Instant brew! Drop any correct ingredient'
-          : cust
-            ? 'Drag ingredients into the cup'
-            : 'Next customer coming…';
+    : s.restockLeft > 0
+      ? ''
+      : inFever
+        ? 'Instant brew! Drop the next correct step'
+        : seats > 1
+          ? 'Tap a cup to select it · drag ingredients to any cup'
+          : 'Follow the order step by step · wrong step = ruined';
 
   return (
     <div className={`relative flex h-full flex-col ${inFever ? 'fever-mode' : ''}`}>
@@ -570,9 +685,19 @@ export default function CoffeeBar({ active, shake }) {
           </motion.div>
         </div>
         <div className="flex items-center gap-1.5">
-          <span className="rounded-full bg-black/25 px-2 py-0.5 text-[11px] font-bold text-cream shadow-[inset_0_1px_2px_rgba(0,0,0,.4)]">
-            {WEATHER[s.weather].icon} {WEATHER[s.weather].label}
-          </span>
+          {s.rushLeft > 0 ? (
+            <motion.span
+              animate={{ scale: [1, 1.08, 1] }}
+              transition={{ duration: 0.5, repeat: Infinity }}
+              className="rounded-full bg-gradient-to-b from-berry-400 to-berry-600 px-2 py-0.5 font-display text-[11px] text-white shadow-[0_0_10px_#e8657a]"
+            >
+              RUSH {Math.ceil(s.rushLeft / 1000)}s
+            </motion.span>
+          ) : (
+            <span className="rounded-full bg-black/25 px-2 py-0.5 text-[11px] font-bold text-cream shadow-[inset_0_1px_2px_rgba(0,0,0,.4)]">
+              {WEATHER[s.weather].icon} {WEATHER[s.weather].label}
+            </span>
+          )}
           <button type="button" onClick={togglePause} disabled={!playing} className="btn btn-cream h-8 w-8 !rounded-full text-xs" aria-label="Pause">
             ❚❚
           </button>
@@ -581,7 +706,12 @@ export default function CoffeeBar({ active, shake }) {
       <FeverGauge value={s.fever} feverLeft={s.feverLeft} combo={s.combo} />
 
       {/* Scene */}
-      <div className={`relative mx-3 mt-2 flex-1 rounded-[30px] p-[5px] shadow-soft ${inFever ? 'fever-scene bg-gold-400' : 'bg-gradient-to-b from-roast-500 to-roast-700'}`} style={{ minHeight: 0 }}>
+      <div
+        className={`relative mx-3 mt-2 flex-1 rounded-[30px] p-[5px] shadow-soft ${
+          inFever ? 'fever-scene bg-gold-400' : s.rushLeft > 0 ? 'rush-scene bg-berry-500' : 'bg-gradient-to-b from-roast-500 to-roast-700'
+        }`}
+        style={{ minHeight: 0 }}
+      >
         <CafeScene
           wallpaper={wallpaper}
           neon={neon}
@@ -594,8 +724,9 @@ export default function CoffeeBar({ active, shake }) {
               <div className="absolute bottom-[3px] left-1/2 flex -translate-x-1/2 items-end gap-0.5 rounded-t-xl bg-roast-950/35 px-2 pt-0.5">
                 <span className="mb-1 mr-1 font-display text-[10px] uppercase tracking-wider text-gold-200/90">Next</span>
                 {s.queue.slice(0, 2).map((q) => (
-                  <div key={q.uid} className={`h-[34px] overflow-hidden ${q.vip ? 'drop-shadow-[0_0_6px_gold]' : ''}`}>
+                  <div key={q.uid} className={`relative h-[34px] overflow-hidden ${q.vip ? 'drop-shadow-[0_0_6px_gold]' : ''}`}>
                     <Character look={q.look} size={32} still />
+                    {q.trait && <span className="absolute -right-0.5 top-0 text-[10px]">{TRAITS[q.trait].icon}</span>}
                   </div>
                 ))}
               </div>
@@ -603,76 +734,139 @@ export default function CoffeeBar({ active, shake }) {
           }
           characters={
             <>
-              <div className="absolute bottom-[22px] left-0">
-                <BossCat hat={hat} glasses={glasses} fever={inFever} mood={bossMood} />
-              </div>
-              <div className="absolute bottom-[54px] left-[33%] origin-bottom scale-[0.78]">
-                <EspressoMachine fever={inFever} busy={s.phase === 'craft' || ready} />
-              </div>
-              <div className="absolute bottom-[26px] right-2">
-                <AnimatePresence custom={s.outcome}>
-                  {cust && <Customer key={cust.uid} ref={customerRef} customer={cust} cup={s.cup} fever={inFever} excited={ready} />}
-                </AnimatePresence>
-              </div>
+              {seats === 1 && (
+                <>
+                  <div className="absolute bottom-[22px] left-0">
+                    <BossCat hat={hat} glasses={glasses} fever={inFever} mood={bossMood} />
+                  </div>
+                  <div className="absolute bottom-[54px] left-[30%] origin-bottom scale-[0.7]">
+                    <EspressoMachine fever={inFever} busy={crafting !== null || s.stations[0].phase === 'serve'} />
+                  </div>
+                </>
+              )}
+              {Array.from({ length: seats }, (_, i) => {
+                const c = s.customers[i];
+                const sta = s.stations[i];
+                return (
+                  <div key={i} data-seat={i} className="absolute bottom-[26px] top-2" style={seatStyle(i)}>
+                    <AnimatePresence custom={c?.outcome || 'happy'}>
+                      {c && (
+                        <Customer
+                          key={c.uid}
+                          ref={custRefs[i]}
+                          customer={c}
+                          layers={sta.layers}
+                          ruined={sta.ruined}
+                          fever={inFever}
+                          excited={sta.phase === 'serve' && !sta.ruined}
+                          compact={seats > 1}
+                          align={seats === 1 ? 'end' : 'center'}
+                        />
+                      )}
+                    </AnimatePresence>
+                  </div>
+                );
+              })}
             </>
           }
           overlay={<AnimatePresence>{banner && <WeatherBanner key={banner.id} weather={banner.weather} />}</AnimatePresence>}
         />
       </div>
 
-      {/* Workstation */}
+      {/* Workstation: one brewing station per seat */}
       <div className="panel-wood relative mx-3 mb-2 mt-2 pt-2">
-        <div className="flex items-end justify-between px-4">
-          <motion.button
-            type="button"
-            whileTap={{ scale: 0.88 }}
-            onClick={trash}
-            className="btn btn-berry mb-2 h-[46px] w-[46px]"
-            disabled={!playing || s.phase !== 'assemble' || s.layers.length === 0}
-            aria-label="Empty cup"
-          >
-            <TrashIcon size={26} />
-          </motion.button>
-          <div className="relative">
-            {/* barista mat */}
-            <div className="absolute -bottom-1 left-1/2 h-4 w-[130px] -translate-x-1/2 rounded-[50%] bg-gradient-to-b from-mint-600 to-mint-800 shadow-[inset_0_2px_0_rgba(255,255,255,.25)]" />
-            <Cup
-              ref={cupRef}
-              layers={s.layers}
-              totalParts={totalParts}
-              hover={hoverCup}
-              ready={ready}
-              fever={inFever}
-              shakeKey={cupShake}
-              onServeDrop={onServeDrop}
-            />
-          </div>
-          <motion.button
-            type="button"
-            whileTap={{ scale: 0.88 }}
-            onClick={serve}
-            disabled={!ready}
-            animate={ready ? { scale: [1, 1.12, 1], rotate: [0, -8, 8, 0] } : { scale: 1, rotate: 0 }}
-            transition={{ repeat: ready ? Infinity : 0, duration: 0.8 }}
-            className={`btn btn-mint mb-2 h-[46px] w-[46px] ${ready ? 'shadow-glow' : ''}`}
-            aria-label="Serve"
-          >
-            <BellIcon size={30} />
-          </motion.button>
+        <div className="grid gap-1 px-2" style={{ gridTemplateColumns: `repeat(${seats}, minmax(0, 1fr))` }}>
+          {Array.from({ length: seats }, (_, i) => {
+            const sta = s.stations[i];
+            const c = s.customers[i];
+            const st = statusFor(i);
+            const ready = playing && sta.phase === 'serve' && !sta.ruined && !!c;
+            return (
+              <div key={i} className="flex flex-col items-center">
+                <div className="flex w-full items-end justify-center gap-1.5">
+                  {seats === 1 && (
+                    <motion.button type="button" whileTap={{ scale: 0.88 }} onClick={() => dump(i)} className="btn btn-berry mb-2 h-10 w-10" disabled={!playing || sta.layers.length === 0} aria-label="Trash cup 1">
+                      <TrashIcon size={22} />
+                    </motion.button>
+                  )}
+                  <div className="relative px-3 pb-1">
+                    <Cup
+                      ref={cupRefs[i]}
+                      layers={sta.layers}
+                      totalParts={c ? c.recipe.seq.length : Math.max(1, sta.layers.length)}
+                      hover={hoverCup === i}
+                      ready={ready}
+                      fever={inFever}
+                      ruined={sta.ruined}
+                      dumping={sta.dumping}
+                      selected={playing && seats > 1 && s.active === i && !sta.ruined}
+                      shakeKey={cupShake[i]}
+                      onTap={() => tapCup(i)}
+                      onServeDrop={onServeDrop(i)}
+                      w={cupSize.w}
+                      h={cupSize.h}
+                    />
+                  </div>
+                  {seats === 1 && (
+                    <motion.button
+                      type="button"
+                      whileTap={{ scale: 0.88 }}
+                      onClick={() => serve(i)}
+                      disabled={!ready}
+                      animate={ready ? { scale: [1, 1.12, 1], rotate: [0, -8, 8, 0] } : { scale: 1, rotate: 0 }}
+                      transition={{ repeat: ready ? Infinity : 0, duration: 0.8 }}
+                      className={`btn btn-mint mb-2 h-10 w-10 ${ready ? 'shadow-glow' : ''}`}
+                      aria-label="Serve"
+                    >
+                      <BellIcon size={24} />
+                    </motion.button>
+                  )}
+                </div>
+                <div className="mt-1 flex items-center gap-1">
+                  {seats > 1 && (
+                    <button type="button" onClick={() => dump(i)} disabled={!playing || sta.layers.length === 0} className="btn btn-berry h-6 w-6 !rounded-lg" aria-label={`Trash cup ${i + 1}`}>
+                      <TrashIcon size={14} />
+                    </button>
+                  )}
+                  <span data-station={i} data-status={st.kind} className={`label-chip !px-2 ${st.tone}`}>
+                    {st.text}
+                  </span>
+                  {seats > 1 && (
+                    <button type="button" onClick={() => serve(i)} disabled={!ready} className={`btn btn-mint h-6 w-6 !rounded-lg ${ready ? 'shadow-glow' : ''}`} aria-label={`Serve cup ${i + 1}`}>
+                      <BellIcon size={15} />
+                    </button>
+                  )}
+                </div>
+              </div>
+            );
+          })}
         </div>
-        <div className="h-5 pt-0.5 text-center font-display text-[12px] tracking-wide text-gold-200 drop-shadow-[0_1px_1px_rgba(0,0,0,.6)]">{hint}</div>
+        <div className="h-[18px] pt-0.5 text-center font-display text-[11.5px] tracking-wide text-gold-200 drop-shadow-[0_1px_1px_rgba(0,0,0,.6)]">{hintText}</div>
         <DragAndDropTray
-          cupRef={cupRef}
+          cupRefs={cupRefs.slice(0, seats)}
           onAdd={handleAdd}
           onHover={setHoverCup}
-          disabled={!playing || s.paused || s.phase !== 'assemble' || !cust}
+          disabled={!playing || s.paused}
           fever={inFever}
-          remaining={remaining}
-          showHints={showHints || inFever}
+          hint={hint}
+          stock={s.stock}
+          cap={bonuses.stockCap}
+          restockLeft={s.restockLeft}
+          restockMs={bonuses.restockMs}
+          onRestock={restock}
         />
         <AnimatePresence>
-          {playing && s.phase === 'craft' && cust && (
-            <QTECrafting key={s.orderToken} steps={cust.recipe.steps} upgrades={save.upgrades} paused={s.paused} onStage={handleStage} onDone={handleCraftDone(s.orderToken)} />
+          {playing && crafting !== null && craftCust && s.stations[crafting].phase === 'craft' && (
+            <QTECrafting
+              key={`${crafting}-${s.stations[crafting].token}`}
+              steps={craftCust.recipe.steps}
+              upgrades={save.upgrades}
+              paused={s.paused}
+              label={seats > 1 ? `Cup ${crafting + 1} · ${craftCust.recipe.name}` : craftCust.recipe.name}
+              onStage={handleStage(crafting)}
+              onDone={handleCraftDone(crafting, s.stations[crafting].token)}
+              onCancel={seats > 1 ? closeCraft : undefined}
+            />
           )}
         </AnimatePresence>
       </div>
@@ -685,7 +879,7 @@ export default function CoffeeBar({ active, shake }) {
             initial={{ y: -40, opacity: 0, scale: 0.9 }}
             animate={{ y: 0, opacity: 1, scale: 1 }}
             exit={{ y: -40, opacity: 0 }}
-            className="card pointer-events-none absolute left-1/2 top-14 z-50 w-[88%] px-3 py-2 text-center font-display text-[15px] text-roast-800"
+            className="card pointer-events-none absolute left-1/2 top-14 z-50 w-[90%] px-3 py-2 text-center font-display text-[14px] text-roast-800"
             style={{ x: '-50%', boxShadow: '0 0 0 3px #ffd23f, 0 0 22px rgba(255,210,63,.7), 0 10px 20px -10px rgba(0,0,0,.6)' }}
           >
             {toast}
@@ -758,10 +952,11 @@ function StartOverlay({ onStart, save, bonuses, hat, glasses }) {
         <StatTile icon={<CoinIcon size={22} />} value={`×${bonuses.coinMult.toFixed(2)}`} label="Coins" accent />
       </div>
       <ul className="card-inset mb-4 space-y-1.5 p-3 text-left text-[13px] font-medium leading-snug text-roast-700">
-        <li>☕ <b>Drag</b> (or tap) ingredients into the cup to match the order.</li>
-        <li>⚙️ <b>Grind</b> fast &amp; <b>froth</b> in the green zone for PERFECT tips.</li>
-        <li>🛎️ <b>Swipe</b> the cup to the customer before patience runs out.</li>
-        <li>🔥 Chain PERFECTs to fill <b>Fever</b>: ×3 coins + instant brewing!</li>
+        <li>☕ Build drinks in <b>exact order</b>: base → <b>Steam/Ice</b> → toppings. One wrong step <b>ruins</b> the cup — trash it.</li>
+        <li>📦 Trays run out! <b>Restock</b> locks the tray for ~2.5s, so do it in a lull.</li>
+        <li>🍵 More stations open as you go. Juggle up to <b>3 orders</b> at once.</li>
+        <li>⚡ <b>Impatient</b> customers rile their neighbours. ❓ <b>Indecisive</b> ones change their order!</li>
+        <li>🔥 Chain PERFECTs for <b>Fever</b>: ×3 coins + instant brewing.</li>
       </ul>
       <BigButton onClick={onStart}>Open the Café!</BigButton>
     </Overlay>
@@ -778,10 +973,12 @@ function GameOverOverlay({ session, onRestart }) {
       <motion.div className="float-text ft-gold ft-big mt-1" initial={{ scale: 0 }} animate={{ scale: [0, 1.3, 1] }} transition={{ delay: 0.2 }}>
         {session.score.toLocaleString()}
       </motion.div>
-      <div className="my-3 grid grid-cols-2 gap-2">
+      <div className="my-3 grid grid-cols-3 gap-2">
         <StatTile icon={<span>☕</span>} value={session.served} label="Served" />
         <StatTile icon={<span>⭐</span>} value={session.perfects} label="Perfect" />
         <StatTile icon={<span>🔥</span>} value={session.maxCombo} label="Max combo" />
+        <StatTile icon={<span>🗑️</span>} value={session.ruinedCount} label="Ruined" />
+        <StatTile icon={<span>🔔</span>} value={session.rushCount} label="Rush hours" />
         <StatTile icon={<CoinIcon size={20} />} value={`+${session.coins}`} label="Coins" accent />
       </div>
       {session.vipsServed.length > 0 && <div className="mb-3 font-display text-sm text-gold-600">★ VIPs served: {session.vipsServed.length}</div>}

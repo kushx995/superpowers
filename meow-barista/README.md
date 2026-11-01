@@ -14,14 +14,23 @@ npm run build:single   # one self-contained HTML file -> dist-single/index.html
 ```
 
 ## How to play
-1. **Drag** ingredients (Espresso, Milk, Catnip, Ice) into the cup, or quick-tap them, until the cup matches the order bubble. A wrong ingredient spills the cup, breaks your combo and costs patience.
-2. Complex drinks have **QTE stages**. ⚙️ **Grind**: tap fast before the timer runs out. ♨️ **Froth**: stop the needle in the green PERFECT zone.
-3. **Swipe the cup up** to the customer (or tap 🛎️) before their patience bar empties. Each customer who walks out costs one ❤️.
-4. Chains of PERFECT orders build the **Combo** and fill the **Fever gauge**. **FEVER MODE** lasts 10 s: ×3 coins, instant brewing (one correct drop fills the drink and the QTEs are skipped), a golden neon scene, faster synth music and screen shake.
-5. The weather cycles through **Morning → Afternoon → Rainy Day (random event) → Night**. On a Rainy Day customers order hot drinks and come in faster, patience drops quicker, and **tips are doubled**. Night brings more VIPs.
-6. **VIP customers** (pandas and other rare guests) have complex signature drinks and pay double. Serving one unlocks their lore card in the **VIP Album**.
-7. Spend Caffeine Coins in the **Shop**: equipment upgrades, café decor (wallpapers, neon signs) and Boss-cat hats and glasses. Every owned decor or style item adds a permanent coin bonus.
-8. **Meow Garden**: adopt rescue cats, feed and pet them, and collect passive **Purr Power** income. Purr Power keeps earning while you're offline (capped at 8 h) and also boosts café coins.
+Meow Barista is a multitasking game in the spirit of Overcooked: it tests timing, memory and juggling.
+
+1. **Strict recipe sequences.** Every drink is an ordered build: **base** (Espresso / Milk) → **temperature** (🔥 **Steam** for hot, 🧊 **Ice** for cold) → **extras/toppings** (more milk, Catnip…). The order bubble numbers each step and highlights the next one. **One wrong step ruins the cup.** It turns to sludge and blocks the station until you **trash it**, which costs you the time, the ingredients, your combo, some Fever and some of the customer's patience.
+2. **Limited stock.** Each tray holds a few portions (shown as pips) and every pour uses one, even a wrong one. **Restock** refills every tray but **locks the whole tray for ~2.5s** while the barista runs to the pantry. Serving still works during that time, so restock in a lull, not mid-rush.
+3. **Multiple stations.** You start with 1 seat and 1 cup. A **2nd station opens after 4 drinks** and a **3rd after 12**. Each station brews for the customer above it: tap a cup to select it (taps pour into the selected cup), or drag an ingredient onto any cup. Serve by swiping a ready cup up, tapping it, or ringing its bell.
+4. **Troublemakers.**
+   - ⚡ **Impatient** customers drain patience 1.6× faster. Once they get annoyed, they **drain the neighbours' patience too**.
+   - ❓ **Indecisive** customers **change their order** at about 55% patience. If the cup you built no longer fits the new order, it is ruined. They do get some patience back.
+   - Both get more common as the shift goes on. The "Next" queue on the counter shows who is coming so you can plan ahead.
+5. **Crafting QTEs.** Some drinks also need ⚙️ **Grind** (rapid taps) and/or ♨️ **Froth** (stop the needle in the green zone) after the sequence. With several stations you can tap **Later** to step away from a QTE and come back to it.
+6. **Pressure.**
+   - Patience is tight and shrinks as you serve more.
+   - **Rush hour** (from about 30s in, then every 50s) floods every seat with complex orders and shorter patience, but pays ×1.5 tips.
+   - A walkout costs a ❤️, your combo and 40% of your Fever.
+7. **Combo & Fever.** Chains of PERFECT serves fill the Fever gauge. **FEVER MODE** lasts 10s and gives ×3 coins. In Fever, dropping the **correct next step** completes the whole drink and skips its QTEs.
+8. **Weather** still cycles through Morning → Afternoon → Rainy Day (hot drinks, faster arrivals, less patience, ×2 tips) → Night (more VIPs).
+9. **Tycoon side.** Coins buy upgrades in the **Shop**, including the new 🧺 **Bigger Pantry Trays** (more portions per tray) and 🐾 **Quick Paws** (faster restocks). They also buy decor and Boss style, and rescue cats in the **Meow Garden** for passive Purr Power. Serve **VIPs** to fill the **VIP Album**.
 
 All progress is saved to `localStorage`.
 
@@ -31,11 +40,12 @@ src/
   App.jsx                    shell, tabs, screen shake, settings, welcome-back modal
   game/data.js               recipes, customers, VIPs, shop, cats, weather (pure data)
   game/store.jsx             persistent tycoon state + Purr Power / offline income
+  game/engine.js             pure shift rules: sequences, stations, troublemakers, drain, payout
   audio/engine.js            procedural music sequencer + synthesized SFX
   hooks/haptics.js           navigator.vibrate wrapper
   components/
-    CoffeeBar.jsx            the shift: game loop, customers, scoring, combo, Fever
-    DragAndDropTray.jsx      draggable / tappable ingredients
+    CoffeeBar.jsx            the shift: multi-station loop, ruin/trash, restock, rush hour, Fever
+    DragAndDropTray.jsx      limited-stock ingredient tray, multi-cup drop targets, Restock
     QTECrafting.jsx          Grind + Froth minigames
     Cup.jsx, Customer.jsx    glass mug with glowing liquid layers; reactive customer + order bubble
     CafeScene.jsx            layered café interior (lamps, plants, window light, counter, machine)
