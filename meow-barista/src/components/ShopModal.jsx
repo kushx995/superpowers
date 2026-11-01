@@ -6,6 +6,8 @@ import { useGame } from '../game/store';
 import { audio } from '../audio/engine';
 import { haptic, HAPTIC } from '../hooks/haptics';
 import { centerOf, useParticles } from './Particles';
+import { CoinIcon } from './Icons';
+import { Character } from './Avatars';
 
 const TABS = [
   { id: 'equipment', label: 'Equipment', icon: '⚙️' },
@@ -13,17 +15,20 @@ const TABS = [
   { id: 'style', label: 'Boss Style', icon: '🎩' },
 ];
 
-function PriceButton({ cost, affordable, onBuy, label }) {
+function PriceButton({ cost, affordable, onBuy, label, tone }) {
   return (
     <motion.button
       type="button"
-      whileTap={affordable ? { scale: 0.9 } : { x: [0, -5, 5, 0] }}
+      whileTap={affordable ? { scale: 0.92 } : { x: [0, -5, 5, 0] }}
       onClick={onBuy}
-      className={`min-w-[78px] rounded-xl border-b-4 px-2 py-1.5 text-sm font-black shadow-chunky ${
-        affordable ? 'border-amber-700 bg-amber-400 text-mocha-900' : 'border-mocha-500 bg-mocha-300/60 text-mocha-700'
-      }`}
+      className={`btn min-w-[82px] px-2.5 py-1.5 font-display text-[15px] ${tone || (affordable ? 'btn-gold' : 'btn-muted')}`}
     >
-      {label || `🪙 ${cost.toLocaleString()}`}
+      {label || (
+        <>
+          <CoinIcon size={18} />
+          {cost.toLocaleString()}
+        </>
+      )}
     </motion.button>
   );
 }
@@ -39,7 +44,7 @@ export default function ShopModal({ open, onClose }) {
     audio.chime(true);
     haptic(HAPTIC.buy);
     burst(c.x, c.y, { emojis: ['🪙', '✨', '🎉'], count: 12 });
-    floatText(c.x, c.y - 20, text, 'text-amber-300');
+    floatText(c.x, c.y - 20, text, 'gold');
   };
   const deny = () => {
     audio.error();
@@ -70,7 +75,8 @@ export default function ShopModal({ open, onClose }) {
       {open && (
         <motion.div className="fixed inset-0 z-[70] flex items-end justify-center bg-black/60" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={onClose}>
           <motion.div
-            className="flex max-h-[86dvh] w-full max-w-md flex-col rounded-t-[32px] border-t-4 border-amber-400 bg-cream pb-[env(safe-area-inset-bottom)] text-mocha-900"
+            className="sheet flex max-h-[86dvh] w-full max-w-md flex-col rounded-t-[34px] pb-[env(safe-area-inset-bottom)] text-roast-800"
+            style={{ boxShadow: 'inset 0 3px 0 #fff, 0 -4px 0 #c08a5b, 0 -8px 0 #5c331d, 0 -20px 40px rgba(0,0,0,.5)' }}
             initial={{ y: '100%' }}
             animate={{ y: 0 }}
             exit={{ y: '100%' }}
@@ -81,15 +87,18 @@ export default function ShopModal({ open, onClose }) {
             onDragEnd={(_, info) => info.offset.y > 120 && onClose()}
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="mx-auto mt-2 h-1.5 w-12 rounded-full bg-mocha-300" />
+            <div className="mx-auto mt-2 h-1.5 w-12 rounded-full bg-roast-300" />
             <div className="flex items-center justify-between px-5 pt-2">
-              <h2 className="font-display text-2xl font-black">🛒 Tycoon Shop</h2>
-              <div className="rounded-full bg-amber-300 px-3 py-1 font-black">🪙 {save.coins.toLocaleString()}</div>
+              <h2 className="title-outline text-[28px]">Tycoon Shop</h2>
+              <div className="coin-pill flex items-center gap-1 py-0.5 pl-1 pr-3 font-display text-lg">
+                <CoinIcon size={22} />
+                {save.coins.toLocaleString()}
+              </div>
             </div>
-            <div className="px-5 text-xs font-bold text-mocha-500">
+            <div className="px-5 text-xs font-medium text-roast-500">
               Coin multiplier ×{bonuses.coinMult.toFixed(2)} · Tips ×{bonuses.tipMult.toFixed(2)}
             </div>
-            <div className="mt-2 flex gap-2 px-4">
+            <div className="card-inset mx-4 mt-2 flex gap-1 p-1">
               {TABS.map((t) => (
                 <button
                   key={t.id}
@@ -98,9 +107,9 @@ export default function ShopModal({ open, onClose }) {
                     setTab(t.id);
                     audio.tap();
                   }}
-                  className={`relative flex-1 rounded-xl py-2 text-xs font-black ${tab === t.id ? 'text-mocha-900' : 'text-mocha-500'}`}
+                  className={`relative flex-1 rounded-xl py-2 font-display text-[13px] ${tab === t.id ? 'text-roast-800' : 'text-roast-400'}`}
                 >
-                  {tab === t.id && <motion.div layoutId="shop-tab" className="absolute inset-0 rounded-xl bg-amber-200" />}
+                  {tab === t.id && <motion.div layoutId="shop-tab" className="btn btn-gold absolute inset-0 !rounded-xl" />}
                   <span className="relative">
                     {t.icon} {t.label}
                   </span>
@@ -114,19 +123,19 @@ export default function ShopModal({ open, onClose }) {
                   const maxed = lvl >= u.max;
                   const cost = u.costs[lvl];
                   return (
-                    <motion.div layout key={u.id} className="flex items-center gap-3 rounded-2xl bg-white p-3 shadow">
-                      <div className="text-3xl">{u.emoji}</div>
+                    <motion.div layout key={u.id} className="card flex items-center gap-3 p-3">
+                      <div className="card-inset grid h-14 w-14 shrink-0 place-items-center text-3xl">{u.emoji}</div>
                       <div className="flex-1">
-                        <div className="font-black">{u.name}</div>
-                        <div className="text-xs text-mocha-500">{u.desc}</div>
+                        <div className="font-display text-[16px] leading-tight">{u.name}</div>
+                        <div className="text-xs font-medium text-roast-500">{u.desc}</div>
                         <div className="mt-1 flex gap-1">
                           {Array.from({ length: u.max }, (_, i) => (
-                            <span key={i} className={`h-2 w-6 rounded-full ${i < lvl ? 'bg-emerald-400' : 'bg-mocha-100'}`} />
+                            <span key={i} className={`h-2.5 w-7 rounded-full ${i < lvl ? 'bg-gradient-to-b from-mint-300 to-mint-500 shadow-[0_0_6px_#72d2aa]' : 'bg-roast-200 shadow-[inset_0_1px_2px_rgba(0,0,0,.2)]'}`} />
                           ))}
                         </div>
                       </div>
                       {maxed ? (
-                        <span className="rounded-xl bg-emerald-200 px-2 py-1 text-xs font-black text-emerald-800">MAX</span>
+                        <span className="btn btn-mint px-3 py-1.5 font-display text-sm">MAX</span>
                       ) : (
                         <PriceButton cost={cost} affordable={save.coins >= cost} onBuy={(e) => onUpgrade(e, u.id)} />
                       )}
@@ -142,19 +151,23 @@ export default function ShopModal({ open, onClose }) {
                       <motion.div
                         layout
                         key={item.id}
-                        className={`flex flex-col items-center gap-1 rounded-2xl bg-white p-3 text-center shadow ${equipped ? 'ring-4 ring-emerald-400' : ''}`}
+                        className={`card flex flex-col items-center gap-1 p-3 text-center ${equipped ? 'ring-4 ring-mint-400' : ''}`}
                       >
                         {item.kind === 'wallpaper' ? (
-                          <div className={`h-12 w-full rounded-xl border-2 border-mocha-300 ${item.preview}`} />
+                          <div className={`h-14 w-full rounded-xl shadow-[inset_0_2px_6px_rgba(0,0,0,.25)] ${item.id === 'wp_cream' ? 'wp-cozy' : item.preview}`} />
                         ) : item.kind === 'neon' ? (
-                          <div className="neon-sign grid h-12 w-full place-items-center rounded-xl bg-mocha-900 font-display text-sm font-black" style={{ color: item.color, '--neon': item.color }}>
+                          <div className="neon-sign grid h-14 w-full place-items-center rounded-xl bg-gradient-to-b from-roast-800 to-roast-950 font-display text-sm shadow-[inset_0_2px_6px_rgba(0,0,0,.5)]" style={{ color: item.color, '--neon': item.color }}>
                             {item.text}
                           </div>
                         ) : (
-                          <div className="grid h-12 place-items-center text-4xl">{item.emoji}</div>
+                          <div className="card-inset flex h-14 w-full items-end justify-center overflow-hidden">
+                            <div className="-mb-6">
+                              <Character look="boss" size={64} still hat={item.kind === 'hat' ? item.id : undefined} glasses={item.kind === 'glasses' ? item.id : undefined} />
+                            </div>
+                          </div>
                         )}
-                        <div className="text-sm font-black leading-tight">{item.name}</div>
-                        <div className="text-[10px] font-bold uppercase text-mocha-500">
+                        <div className="font-display text-[14px] leading-tight">{item.name}</div>
+                        <div className="text-[10px] font-semibold uppercase tracking-wide text-mint-700">
                           {item.kind}
                           {item.bonus ? ` · +${Math.round(item.bonus * 100)}% coins` : ''}
                         </div>
@@ -163,13 +176,14 @@ export default function ShopModal({ open, onClose }) {
                           affordable={owned || save.coins >= item.cost}
                           onBuy={(e) => onItem(e, item)}
                           label={owned ? (equipped ? (item.kind === 'wallpaper' ? '✓ Using' : '✓ Unequip') : 'Equip') : undefined}
+                          tone={owned ? (equipped ? 'btn-mint' : 'btn-cream') : undefined}
                         />
                       </motion.div>
                     );
                   })}
                 </div>
               )}
-              <p className="pt-2 text-center text-[11px] font-semibold text-mocha-500">Owned decor &amp; style items permanently boost coins — even when not equipped.</p>
+              <p className="pt-2 text-center text-[11px] font-medium text-roast-500">Owned decor &amp; style items permanently boost coins — even when not equipped.</p>
             </div>
           </motion.div>
         </motion.div>

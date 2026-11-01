@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { audio } from '../audio/engine';
 import { haptic, HAPTIC } from '../hooks/haptics';
+import { STAGE_ICONS } from './Icons';
 
 const GRIND_TAPS = [12, 10, 8, 6];
 const GRIND_TIME = 4200;
@@ -17,11 +18,7 @@ export const STAGE_META = {
   serve: { label: 'Serve', icon: '🛎️' },
 };
 
-const RESULT_STYLE = {
-  PERFECT: 'from-emerald-300 to-emerald-500 text-emerald-950',
-  GOOD: 'from-amber-200 to-amber-400 text-amber-950',
-  MISS: 'from-rose-300 to-rose-500 text-rose-950',
-};
+const RESULT_TONE = { PERFECT: 'ft-mint', GOOD: 'ft-gold', MISS: 'ft-berry' };
 
 function useRaf(callback, active) {
   const cb = useRef(callback);
@@ -73,28 +70,38 @@ function GrindStage({ level, onResult, paused }) {
   const pct = Math.min(1, taps / need);
   const timeLeft = Math.max(0, 1 - elapsed / GRIND_TIME);
   return (
-    <div className="flex flex-col items-center gap-3">
-      <div className="text-center font-display text-lg font-black text-white drop-shadow">TAP TAP TAP! Grind the beans</div>
+    <div className="flex flex-col items-center gap-2">
+      <div className="title-outline text-center text-lg">Tap tap tap! Grind the beans</div>
       <motion.button
         type="button"
         onPointerDown={tap}
-        whileTap={{ scale: 0.88 }}
-        className="relative grid h-32 w-32 touch-none place-items-center rounded-full border-b-8 border-mocha-900 bg-gradient-to-b from-mocha-300 to-mocha-500 shadow-chunky"
+        whileTap={{ scale: 0.9 }}
+        className="relative grid h-[100px] w-[100px] touch-none place-items-center rounded-full"
+        style={{
+          background: 'radial-gradient(circle at 35% 30%, #f6d6b0, #c08a5b 55%, #7c4a2b)',
+          boxShadow: 'inset 0 4px 0 rgba(255,240,215,.7), inset 0 -8px 14px rgba(42,22,12,.45), 0 7px 0 #3f2214, 0 16px 24px -8px rgba(0,0,0,.7)',
+        }}
         aria-label="Grind"
       >
         <svg className="absolute inset-0 -rotate-90" viewBox="0 0 100 100">
-          <circle cx="50" cy="50" r="46" fill="none" stroke="rgba(0,0,0,0.2)" strokeWidth="7" />
-          <circle cx="50" cy="50" r="46" fill="none" stroke="#34d399" strokeWidth="7" strokeLinecap="round" strokeDasharray={289} strokeDashoffset={289 * (1 - pct)} />
+          <circle cx="50" cy="50" r="45" fill="none" stroke="rgba(42,22,12,0.45)" strokeWidth="8" />
+          <circle cx="50" cy="50" r="45" fill="none" stroke="url(#grindGrad)" strokeWidth="8" strokeLinecap="round" strokeDasharray={283} strokeDashoffset={283 * (1 - pct)} style={{ transition: 'stroke-dashoffset 120ms ease-out', filter: 'drop-shadow(0 0 4px #72d2aa)' }} />
+          <defs>
+            <linearGradient id="grindGrad" x1="0" x2="1">
+              <stop offset="0" stopColor="#c8f0dc" />
+              <stop offset="1" stopColor="#43b98a" />
+            </linearGradient>
+          </defs>
         </svg>
-        <motion.span className="text-6xl" animate={{ rotate: taps * 45 }} transition={{ type: 'spring', stiffness: 400, damping: 15 }}>
-          ⚙️
+        <motion.span animate={{ rotate: taps * 45 }} transition={{ type: 'spring', stiffness: 400, damping: 14 }}>
+          <STAGE_ICONS.grind size={52} />
         </motion.span>
-        <span className="absolute -bottom-2 rounded-full bg-mocha-900 px-2 text-sm font-black text-amber-200">
+        <span className="absolute -bottom-3 rounded-full bg-gradient-to-b from-roast-700 to-roast-900 px-3 py-0.5 font-display text-base text-gold-300 shadow-md">
           {taps}/{need}
         </span>
       </motion.button>
-      <div className="h-2 w-48 overflow-hidden rounded-full bg-black/30">
-        <div className={`h-full ${timeLeft > 0.4 ? 'bg-emerald-400' : 'bg-rose-400'}`} style={{ width: `${timeLeft * 100}%` }} />
+      <div className="pill-track mt-2 h-3.5 w-52 p-[2px]">
+        <div className={`pill-fill h-full bg-gradient-to-b ${timeLeft > 0.4 ? 'from-mint-300 to-mint-500' : 'from-berry-400 to-berry-600'}`} style={{ width: `${timeLeft * 100}%` }} />
       </div>
     </div>
   );
@@ -148,23 +155,34 @@ function FrothStage({ level, onResult, paused }) {
     else finish('MISS');
   };
 
+  const left = (v) => `${Math.max(0, v) * 100}%`;
   return (
     <div className="flex w-full flex-col items-center gap-3">
-      <div className="text-center font-display text-lg font-black text-white drop-shadow">Stop the needle in the GREEN zone!</div>
-      <button type="button" onPointerDown={stop} className="relative h-14 w-full touch-none overflow-hidden rounded-2xl border-4 border-mocha-900 bg-rose-400/90" aria-label="Stop frothing">
-        <div className="absolute inset-y-0 bg-amber-300" style={{ left: `${(zone - green / 2 - 0.11) * 100}%`, width: `${(green + 0.22) * 100}%` }} />
-        <div className="absolute inset-y-0 bg-emerald-400 shadow-[0_0_16px_#34d399]" style={{ left: `${(zone - green / 2) * 100}%`, width: `${green * 100}%` }}>
-          <span className="absolute inset-0 grid place-items-center text-[10px] font-black text-emerald-950">PERFECT</span>
-        </div>
-        <div className="absolute inset-y-[-4px] w-2 -translate-x-1/2 rounded bg-white shadow-[0_0_10px_white]" style={{ left: `${pos * 100}%` }} />
-      </button>
-      <motion.button
+      <div className="title-outline text-center text-lg">Stop in the green zone!</div>
+      <button
         type="button"
         onPointerDown={stop}
-        whileTap={{ scale: 0.9 }}
-        className="touch-none rounded-full border-b-4 border-sky-800 bg-gradient-to-b from-sky-300 to-sky-500 px-10 py-3 font-display text-2xl font-black text-white shadow-chunky"
+        className="pill-track relative h-14 w-full touch-none overflow-hidden !rounded-[22px] p-1"
+        aria-label="Stop frothing"
       >
-        ♨️ STOP!
+        <div className="absolute inset-1 rounded-[18px] bg-gradient-to-b from-berry-400 to-berry-600 shadow-[inset_0_2px_0_rgba(255,255,255,.4)]" />
+        <div className="absolute inset-y-1 bg-gradient-to-b from-gold-300 to-gold-500" style={{ left: left(zone - green / 2 - 0.11), width: `${(green + 0.22) * 100}%` }} />
+        <motion.div
+          className="absolute inset-y-1 bg-gradient-to-b from-mint-300 to-mint-500"
+          style={{ left: left(zone - green / 2), width: `${green * 100}%`, boxShadow: '0 0 18px #72d2aa, inset 0 2px 0 rgba(255,255,255,.6)' }}
+          animate={{ opacity: [0.85, 1, 0.85] }}
+          transition={{ duration: 0.6, repeat: Infinity }}
+        >
+          <span className="absolute inset-0 grid place-items-center font-display text-[11px] text-mint-800">PERFECT</span>
+        </motion.div>
+        {/* milk-foam needle */}
+        <div className="absolute inset-y-0 w-0" style={{ left: `${pos * 100}%` }}>
+          <div className="absolute inset-y-0 -left-[5px] w-[10px] rounded-full bg-white shadow-[0_0_12px_#fff,0_0_0_2px_#3f2214]" />
+          <div className="absolute -left-[9px] -top-1 h-[18px] w-[18px] rounded-full border-2 border-roast-800 bg-cream" />
+        </div>
+      </button>
+      <motion.button type="button" onPointerDown={stop} whileTap={{ scale: 0.92 }} className="btn btn-sky touch-none px-10 py-2.5 font-display text-2xl">
+        <STAGE_ICONS.froth size={30} /> STOP!
       </motion.button>
     </div>
   );
@@ -206,20 +224,23 @@ export default function QTECrafting({ steps, upgrades, onStage, onDone, paused }
   const step = steps[index];
   return (
     <motion.div
-      className="absolute inset-0 z-30 flex flex-col items-center justify-center gap-2 rounded-3xl bg-mocha-900/85 p-4 backdrop-blur-sm"
+      className="panel-wood absolute inset-0 z-30 flex flex-col items-center justify-center gap-1.5 px-4 py-2"
       initial={{ opacity: 0, scale: 0.9 }}
       animate={{ opacity: 1, scale: 1 }}
       exit={{ opacity: 0, scale: 0.9 }}
     >
-      <div className="mb-1 flex items-center gap-2">
+      <div className="flex items-center gap-2">
         {[...steps, 'serve'].map((s, i) => (
           <div
             key={s + i}
-            className={`flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-black ${
-              i < index ? 'bg-emerald-500 text-white' : i === index ? 'bg-amber-300 text-mocha-900' : 'bg-white/15 text-white/60'
+            className={`flex items-center gap-1 rounded-full py-0.5 pl-1 pr-2.5 text-xs font-bold shadow-md ${
+              i < index ? 'bg-gradient-to-b from-mint-300 to-mint-500 text-mint-800' : i === index ? 'bg-gradient-to-b from-gold-200 to-gold-400 text-roast-800 ring-2 ring-gold-200' : 'bg-white/10 text-cream/60'
             }`}
           >
-            <span>{STAGE_META[s].icon}</span>
+            {(() => {
+              const Icon = STAGE_ICONS[s];
+              return <Icon size={18} />;
+            })()}
             <span>
               {i + 1}. {STAGE_META[s].label}
             </span>
@@ -235,7 +256,7 @@ export default function QTECrafting({ steps, upgrades, onStage, onDone, paused }
       <AnimatePresence>
         {flash && (
           <motion.div
-            className={`pointer-events-none absolute rounded-2xl bg-gradient-to-b px-6 py-2 font-display text-4xl font-black shadow-chunky ${RESULT_STYLE[flash]}`}
+            className={`float-text ft-big pointer-events-none absolute ${RESULT_TONE[flash]}`}
             initial={{ scale: 0.2, rotate: -15, opacity: 0 }}
             animate={{ scale: 1, rotate: 0, opacity: 1 }}
             exit={{ scale: 1.6, opacity: 0 }}

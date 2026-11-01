@@ -99,7 +99,7 @@ export const UPGRADES = {
 
 // kind: wallpaper | neon | hat | glasses. bonus = permanent coin multiplier while owned.
 export const ITEMS = [
-  { id: 'wp_cream', kind: 'wallpaper', name: 'Cream Latte', cost: 0, bonus: 0, preview: 'bg-[#fbe9d3]' },
+  { id: 'wp_cream', kind: 'wallpaper', name: 'Cream Latte', cost: 0, bonus: 0, preview: 'wp-cozy' },
   { id: 'wp_stripes', kind: 'wallpaper', name: 'Mint Stripes', cost: 90, bonus: 0.03, preview: 'wp-stripes' },
   { id: 'wp_paws', kind: 'wallpaper', name: 'Paw Prints', cost: 160, bonus: 0.04, preview: 'wp-paws' },
   { id: 'wp_galaxy', kind: 'wallpaper', name: 'Galaxy Night', cost: 380, bonus: 0.06, preview: 'wp-galaxy' },

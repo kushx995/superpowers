@@ -8,6 +8,8 @@ import VIPAlbum from './components/VIPAlbum';
 import ShopModal from './components/ShopModal';
 import { audio } from './audio/engine';
 import { haptic, HAPTIC } from './hooks/haptics';
+import { CoinIcon } from './components/Icons';
+import { Character } from './components/Avatars';
 
 const TABS = [
   { id: 'cafe', label: 'Café', icon: '☕' },
@@ -23,9 +25,9 @@ function CoinCounter({ coins }) {
       initial={{ scale: 1.25 }}
       animate={{ scale: 1 }}
       transition={{ type: 'spring', stiffness: 500, damping: 15 }}
-      className="flex items-center gap-1 rounded-full border-2 border-amber-500 bg-gradient-to-b from-amber-200 to-amber-400 px-3 py-0.5 font-display text-base font-black text-mocha-900 shadow-chunky"
+      className="coin-pill flex items-center gap-1.5 py-0.5 pl-1 pr-3 font-display text-[17px] text-roast-800"
     >
-      <span>🪙</span>
+      <CoinIcon size={24} />
       <span className="tabular-nums">{coins.toLocaleString()}</span>
     </motion.div>
   );
@@ -44,13 +46,14 @@ function SettingsSheet({ open, onClose }) {
       {open && (
         <motion.div className="fixed inset-0 z-[75] flex items-center justify-center bg-black/60 p-6" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={onClose}>
           <motion.div
-            className="w-full max-w-xs rounded-[28px] border-4 border-mocha-300 bg-cream p-5 text-mocha-900"
+            className="sheet w-full max-w-xs rounded-[30px] p-5 text-roast-800"
+            style={{ boxShadow: 'inset 0 3px 0 #fff, 0 0 0 4px #c08a5b, 0 0 0 8px #5c331d, 0 24px 40px -12px rgba(0,0,0,.8)' }}
             initial={{ scale: 0.8 }}
             animate={{ scale: 1 }}
             exit={{ scale: 0.8 }}
             onClick={(e) => e.stopPropagation()}
           >
-            <h2 className="mb-3 font-display text-2xl font-black">⚙️ Settings</h2>
+            <h2 className="title-outline mb-3 text-center text-2xl">Settings</h2>
             {rows.map((r) => (
               <button
                 key={r.key}
@@ -61,17 +64,17 @@ function SettingsSheet({ open, onClose }) {
                   audio.tap();
                   if (r.key === 'haptics' && !save.settings.haptics) setTimeout(() => haptic(HAPTIC.buy), 30);
                 }}
-                className="mb-2 flex w-full items-center justify-between rounded-2xl bg-white px-4 py-3 font-black shadow"
+                className="card mb-2 flex w-full items-center justify-between px-4 py-3 font-semibold"
               >
                 <span>
                   {r.icon} {r.label}
                 </span>
-                <span className={`relative h-7 w-12 rounded-full transition-colors ${save.settings[r.key] ? 'bg-emerald-400' : 'bg-mocha-300'}`}>
-                  <motion.span className="absolute top-1 h-5 w-5 rounded-full bg-white shadow" animate={{ left: save.settings[r.key] ? 24 : 4 }} />
+                <span className={`relative h-7 w-12 rounded-full shadow-[inset_0_2px_4px_rgba(0,0,0,.3)] transition-colors ${save.settings[r.key] ? 'bg-mint-500' : 'bg-roast-300'}`}>
+                  <motion.span className="absolute top-1 h-5 w-5 rounded-full bg-gradient-to-b from-white to-cream-300 shadow-md" animate={{ left: save.settings[r.key] ? 24 : 4 }} />
                 </span>
               </button>
             ))}
-            <div className="mt-3 text-xs font-semibold text-mocha-500">
+            <div className="mt-3 text-center text-xs font-medium text-roast-500">
               Lifetime drinks served: {save.totalServed} · VIPs: {save.album.length}
             </div>
             <button
@@ -83,11 +86,11 @@ function SettingsSheet({ open, onClose }) {
                   onClose();
                 } else setConfirm(true);
               }}
-              className="mt-3 w-full rounded-2xl bg-rose-100 py-2 text-sm font-black text-rose-700"
+              className="btn btn-cream mt-3 w-full py-2 text-sm !text-berry-600"
             >
               {confirm ? 'Tap again to erase ALL progress' : 'Reset save data'}
             </button>
-            <button type="button" onClick={onClose} className="mt-2 w-full rounded-2xl bg-mocha-900 py-2 font-black text-cream">
+            <button type="button" onClick={onClose} className="btn btn-roast mt-3 w-full py-2.5 font-display text-lg">
               Done
             </button>
           </motion.div>
@@ -104,18 +107,19 @@ function WelcomeBack() {
       {welcomeBack && (
         <motion.div className="fixed inset-0 z-[78] flex items-center justify-center bg-black/60 p-6" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
           <motion.div
-            className="w-full max-w-xs rounded-[28px] border-4 border-amber-400 bg-cream p-5 text-center text-mocha-900"
+            className="sheet w-full max-w-xs rounded-[30px] p-5 pt-2 text-center text-roast-800"
+            style={{ boxShadow: 'inset 0 3px 0 #fff, 0 0 0 4px #ffd23f, 0 0 0 8px #a86f00, 0 0 40px rgba(255,210,63,.5)' }}
             initial={{ scale: 0.6, rotate: -6 }}
             animate={{ scale: 1, rotate: 0 }}
             exit={{ scale: 0.8, opacity: 0 }}
             transition={{ type: 'spring', stiffness: 260, damping: 18 }}
           >
-            <div className="text-6xl">😻💤</div>
-            <h2 className="font-display text-2xl font-black">Welcome back!</h2>
-            <p className="my-2 text-sm font-semibold">
+            <div className="-mt-14 flex justify-center -space-x-4"><Character look="mochi" expr="love" size={78} /><Character look="luna" expr="happy" size={70} /></div>
+            <h2 className="title-outline text-2xl">Welcome back!</h2>
+            <p className="my-2 text-sm font-medium">
               Your cats purred for {welcomeBack.minutes >= 60 ? `${Math.floor(welcomeBack.minutes / 60)}h ${welcomeBack.minutes % 60}m` : `${welcomeBack.minutes}m`} while you were away.
             </p>
-            <div className="mb-3 font-display text-4xl font-black text-amber-600">🪙 {welcomeBack.coins.toLocaleString()}</div>
+            <div className="mb-4 flex items-center justify-center gap-2"><CoinIcon size={40} /><span className="float-text ft-gold ft-big">{welcomeBack.coins.toLocaleString()}</span></div>
             <motion.button
               type="button"
               whileTap={{ scale: 0.92 }}
@@ -126,7 +130,7 @@ function WelcomeBack() {
                 haptic(HAPTIC.perfect);
                 dismissWelcome();
               }}
-              className="w-full rounded-2xl border-b-[6px] border-amber-700 bg-gradient-to-b from-amber-300 to-amber-500 py-3 font-display text-xl font-black shadow-chunky"
+              className="btn btn-gold w-full py-3 font-display text-2xl"
             >
               Collect!
             </motion.button>
@@ -174,16 +178,16 @@ function Shell() {
   const gardenAlert = Math.floor(save.gardenPending) > 0;
 
   return (
-    <motion.div animate={controls} className="relative mx-auto flex h-full w-full max-w-md flex-col overflow-hidden bg-gradient-to-b from-mocha-700 via-mocha-900 to-[#1a0f08] pt-[env(safe-area-inset-top)]">
+    <motion.div animate={controls} className="relative mx-auto flex h-full w-full max-w-md flex-col overflow-hidden bg-[radial-gradient(120%_60%_at_50%_0%,#7c4a2b_0%,#3f2214_55%,#1a0d07_100%)] pt-[env(safe-area-inset-top)]">
       {/* Top bar */}
       <div className="flex items-center justify-between px-3 py-1.5">
-        <div className="font-display text-sm font-black leading-none text-cream">
-          Meow Barista
-          <div className="text-[10px] font-bold text-amber-300">×{bonuses.coinMult.toFixed(2)} coin boost</div>
+        <div className="leading-none">
+          <div className="title-outline text-[19px]" style={{ WebkitTextStrokeWidth: 4 }}>Meow Barista</div>
+          <div className="mt-0.5 text-[10px] font-semibold text-gold-300">×{bonuses.coinMult.toFixed(2)} coin boost</div>
         </div>
         <div className="flex items-center gap-2">
           <CoinCounter coins={save.coins} />
-          <button type="button" onClick={() => setSettingsOpen(true)} className="grid h-8 w-8 place-items-center rounded-full bg-black/30 text-cream" aria-label="Settings">
+          <button type="button" onClick={() => setSettingsOpen(true)} className="btn btn-cream h-9 w-9 !rounded-full text-base" aria-label="Settings">
             ⚙️
           </button>
         </div>
@@ -204,17 +208,17 @@ function Shell() {
       </div>
 
       {/* Bottom navigation (thumb zone) */}
-      <nav className="grid grid-cols-4 gap-1 border-t-2 border-mocha-700 bg-[#1a0f08] px-2 pb-[max(env(safe-area-inset-bottom),6px)] pt-1.5">
+      <nav className="relative grid grid-cols-4 gap-1 rounded-t-[26px] bg-gradient-to-b from-roast-800 to-roast-950 px-2 pb-[max(env(safe-area-inset-bottom),6px)] pt-1.5 shadow-[0_-6px_16px_rgba(0,0,0,.45),inset_0_2px_0_rgba(255,210,160,.18)]">
         {TABS.map((t) => {
           const activeTab = t.id === 'shop' ? shopOpen : tab === t.id && !shopOpen;
           return (
             <button key={t.id} type="button" onClick={() => go(t.id)} className="relative flex flex-col items-center rounded-2xl py-1">
-              {activeTab && <motion.div layoutId="nav-pill" className="absolute inset-0 rounded-2xl bg-amber-400/20" transition={{ type: 'spring', stiffness: 500, damping: 35 }} />}
+              {activeTab && <motion.div layoutId="nav-pill" className="absolute inset-0 rounded-2xl bg-gradient-to-b from-gold-300/30 to-gold-500/10 shadow-[inset_0_1px_0_rgba(255,240,200,.4),0_0_14px_rgba(255,210,63,.25)]" transition={{ type: 'spring', stiffness: 500, damping: 35 }} />}
               <motion.span className="relative text-2xl" animate={activeTab ? { y: -2, scale: 1.15 } : { y: 0, scale: 1 }}>
                 {t.icon}
               </motion.span>
-              <span className={`relative text-[10px] font-black uppercase tracking-wide ${activeTab ? 'text-amber-300' : 'text-cream/60'}`}>{t.label}</span>
-              {t.id === 'garden' && gardenAlert && <span className="absolute right-4 top-0.5 h-2.5 w-2.5 animate-ping rounded-full bg-rose-500" />}
+              <span className={`relative font-display text-[11px] tracking-wide ${activeTab ? 'text-gold-300' : 'text-cream/55'}`}>{t.label}</span>
+              {t.id === 'garden' && gardenAlert && <span className="absolute right-5 top-1 h-3 w-3 rounded-full bg-berry-500 shadow-[0_0_8px_#e8657a] ring-2 ring-roast-900" />}
             </button>
           );
         })}

@@ -17,11 +17,14 @@ import { useGame } from '../game/store';
 import { audio } from '../audio/engine';
 import { haptic, HAPTIC } from '../hooks/haptics';
 import { centerOf, useParticles } from './Particles';
-import { WeatherBanner, WeatherWindow, nextWeather } from './WeatherSystem';
+import { WeatherBanner, nextWeather } from './WeatherSystem';
 import DragAndDropTray from './DragAndDropTray';
 import QTECrafting from './QTECrafting';
 import Customer from './Customer';
-import Cup from './Cup';
+import Cup, { LIQUID } from './Cup';
+import CafeScene, { EspressoMachine } from './CafeScene';
+import { Character, VIP_LOOKS, lookForSpecies } from './Avatars';
+import { CoinIcon, HeartIcon, TrashIcon, BellIcon } from './Icons';
 
 const TICK = 100;
 const TIP_RATE = { PERFECT: 0.8, GOOD: 0.35, MISS: 0 };
@@ -77,7 +80,7 @@ function makeCustomer(g, bonuses, album) {
     const recipe = vip.recipe;
     const patienceMax =
       (26000 + recipe.steps.length * 3500 + sumParts(recipe.parts) * 800) * w.patience * bonuses.patienceMult * Math.max(0.7, difficulty);
-    return { uid: Math.random(), emoji: vip.emoji, name: vip.name, voice: 'meow', vip, recipe, patienceMax, patience: patienceMax };
+    return { uid: Math.random(), emoji: vip.emoji, look: VIP_LOOKS[vip.id] || 'panda', name: vip.name, voice: 'meow', vip, recipe, patienceMax, patience: patienceMax };
   }
 
   const species = pick(Object.values(SPECIES));
@@ -94,6 +97,7 @@ function makeCustomer(g, bonuses, album) {
   return {
     uid: Math.random(),
     emoji: species.emoji,
+    look: lookForSpecies(species.id),
     name: pick(species.names),
     voice: species.voice,
     vip: null,
@@ -107,8 +111,12 @@ function Hearts({ lives, max }) {
   return (
     <div className="flex gap-0.5">
       {Array.from({ length: max }, (_, i) => (
-        <motion.span key={i} className="text-lg" animate={i < lives ? { scale: 1, opacity: 1 } : { scale: 0.7, opacity: 0.25 }}>
-          {i < lives ? '❤️' : '🖤'}
+        <motion.span
+          key={i}
+          animate={i < lives ? { scale: [1, 1.12, 1], opacity: 1 } : { scale: 0.8, opacity: 0.45 }}
+          transition={i < lives ? { duration: 1.2, repeat: Infinity, delay: i * 0.15 } : { duration: 0.3 }}
+        >
+          <HeartIcon size={22} filled={i < lives} />
         </motion.span>
       ))}
     </div>
@@ -120,14 +128,14 @@ function FeverGauge({ value, feverLeft, combo }) {
   const pct = inFever ? (feverLeft / FEVER_DURATION) * 100 : value;
   return (
     <div className="flex items-center gap-2 px-3">
-      <div className={`relative h-5 flex-1 overflow-hidden rounded-full border-2 ${inFever ? 'border-amber-300' : 'border-mocha-700'} bg-mocha-900/60`}>
+      <div className={`pill-track relative h-6 flex-1 p-[3px] ${inFever ? 'shadow-glow' : ''}`}>
         <motion.div
-          className={`h-full ${inFever ? 'bg-gradient-to-r from-amber-300 via-fuchsia-400 to-amber-300' : 'bg-gradient-to-r from-orange-400 to-amber-300'}`}
-          animate={{ width: `${pct}%` }}
-          transition={{ duration: inFever ? 0.1 : 0.4, ease: inFever ? 'linear' : 'easeOut' }}
+          className={`pill-fill h-full ${inFever ? 'bg-[linear-gradient(90deg,#ffe27a,#ff8fd8,#ffd23f,#9ee6ff,#ffe27a)] bg-[length:200%_100%]' : 'bg-gradient-to-b from-[#ffcf7a] to-[#ff8a3d]'}`}
+          animate={inFever ? { width: `${pct}%`, backgroundPosition: ['0% 0%', '200% 0%'] } : { width: `${pct}%` }}
+          transition={inFever ? { width: { duration: 0.1, ease: 'linear' }, backgroundPosition: { duration: 1, repeat: Infinity, ease: 'linear' } } : { duration: 0.4, ease: 'easeOut' }}
         />
-        <span className="absolute inset-0 grid place-items-center text-[10px] font-black uppercase tracking-widest text-white drop-shadow">
-          {inFever ? `🔥 FEVER ×${FEVER_MULT} · ${Math.ceil(feverLeft / 1000)}s 🔥` : value >= 70 ? 'Fever almost ready!' : 'Fever'}
+        <span className="absolute inset-0 grid place-items-center font-display text-[12px] tracking-wider text-cream drop-shadow-[0_1px_1px_rgba(0,0,0,0.8)]">
+          {inFever ? `FEVER ×${FEVER_MULT} · ${Math.ceil(feverLeft / 1000)}s` : value >= 70 ? 'Fever almost ready!' : 'Fever'}
         </span>
       </div>
       <AnimatePresence mode="popLayout">
@@ -135,9 +143,9 @@ function FeverGauge({ value, feverLeft, combo }) {
           <motion.div
             key={combo}
             initial={{ scale: 2, rotate: -20, opacity: 0 }}
-            animate={{ scale: 1, rotate: 0, opacity: 1 }}
+            animate={{ scale: 1, rotate: -4, opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="rounded-xl bg-fuchsia-500 px-2 py-0.5 font-display text-sm font-black text-white shadow-chunky"
+            className="btn btn-berry px-2.5 py-0.5 font-display text-sm"
           >
             {combo}× COMBO
           </motion.div>
@@ -148,23 +156,17 @@ function FeverGauge({ value, feverLeft, combo }) {
 }
 
 function BossCat({ hat, glasses, fever, mood }) {
+  const expr = mood === 'happy' ? 'love' : mood === 'sad' ? 'sad' : fever ? 'happy' : 'idle';
   return (
-    <motion.div
-      className="relative select-none text-[58px] leading-none"
-      animate={fever ? { rotate: [-8, 8, -8], y: [0, -6, 0] } : { rotate: 0, y: [0, -2, 0] }}
-      transition={{ repeat: Infinity, duration: fever ? 0.4 : 2 }}
-    >
-      {mood === 'happy' ? '😸' : mood === 'sad' ? '😿' : '😺'}
-      {hat && <span className="absolute -top-6 left-1/2 -translate-x-1/2 text-[34px]">{hat}</span>}
-      {glasses && <span className="absolute left-1/2 top-[14px] -translate-x-1/2 text-[30px]">{glasses}</span>}
-      <span className="absolute -bottom-1 left-1/2 -translate-x-1/2 rounded bg-mocha-900 px-1 text-[8px] font-black uppercase text-amber-200">Boss</span>
-    </motion.div>
+    <div className="relative">
+      <Character look="boss" expr={expr} size={100} hat={hat} glasses={glasses} lively={fever} />
+    </div>
   );
 }
 
 export default function CoffeeBar({ active, shake }) {
   const { save, bonuses, addCoins, unlockVip, recordShift, finishTutorial } = useGame();
-  const { burst, floatText } = useParticles();
+  const { burst, floatText, splash, ripple } = useParticles();
   const g = useRef(freshSession(bonuses.lives));
   const [, setFrame] = useState(0);
   const rerender = useCallback(() => setFrame((f) => (f + 1) % 1e9), []);
@@ -204,14 +206,16 @@ export default function CoffeeBar({ active, shake }) {
     shake(14);
     const c = centerOf(counterRef.current);
     burst(c.x, c.y, { emojis: ['🔥', '⭐', '✨', '💛'], count: 24, spread: 180 });
-    floatText(c.x, c.y - 40, 'FEVER MODE!', 'text-amber-300 text-4xl');
+    floatText(c.x, c.y - 40, 'FEVER MODE!', 'gold', true);
+    ripple(c.x, c.y, '#ffd23f', 6);
+    ripple(c.x, c.y, '#ff4fd8', 4);
     // instant brewing: finish any in-progress craft immediately
     if (st.phase === 'craft') {
       st.stageResults = st.customer.recipe.steps.map(() => 'PERFECT');
       st.phase = 'serve';
       st.orderToken++;
     }
-  }, [burst, floatText, shake]);
+  }, [burst, floatText, ripple, shake]);
 
   const endShift = useCallback(() => {
     const st = g.current;
@@ -228,6 +232,7 @@ export default function CoffeeBar({ active, shake }) {
     const st = g.current;
     if (!st.customer) return;
     st.outcome = 'angry';
+    st.customer.outcome = 'angry';
     st.customer = null;
     st.cup = {};
     st.layers = [];
@@ -243,7 +248,7 @@ export default function CoffeeBar({ active, shake }) {
     shake(10);
     flashBoss('sad');
     const c = centerOf(customerRef.current || counterRef.current);
-    floatText(c.x, c.y, '-1 ❤️ Too slow!', 'text-rose-400');
+    floatText(c.x, c.y, 'Too slow! -1 ♥', 'berry');
     burst(c.x, c.y, { emojis: ['💢', '💔'], count: 6 });
     if (st.lives <= 0) endShift();
   }, [burst, floatText, shake, endShift]);
@@ -367,8 +372,10 @@ export default function CoffeeBar({ active, shake }) {
     setCupShake((k) => k + 1);
     flashBoss('sad');
     const c = centerOf(cupRef.current);
-    floatText(c.x, c.y - 30, `No ${INGREDIENTS[id].name}! ✗`, 'text-rose-400');
-    burst(c.x, c.y, { emojis: ['💦', '💧'], count: 8 });
+    floatText(c.x, c.y - 30, `No ${INGREDIENTS[id].name}!`, 'berry');
+    splash(c.x, c.y - 30, LIQUID[id].particle, { count: 14, spread: 80, glow: false });
+    st.customer.react = 'sad';
+    st.customer.reactUntil = Date.now() + 900;
   };
 
   const handleAdd = (id) => {
@@ -376,7 +383,7 @@ export default function CoffeeBar({ active, shake }) {
       if (st.status !== 'playing' || st.paused || !st.customer || st.phase !== 'assemble') {
         if (st.phase === 'serve') {
           const c = centerOf(cupRef.current);
-          floatText(c.x, c.y - 50, 'Serve it! ⬆️', 'text-sky-300');
+          floatText(c.x, c.y - 50, 'Serve it!', 'sky');
         }
         return;
       }
@@ -399,12 +406,15 @@ export default function CoffeeBar({ active, shake }) {
         st.phase = 'serve';
         audio.pour(id);
         audio.chime(true);
-        burst(c.x, c.y, { emojis: ['⚡', '✨', INGREDIENTS[id].emoji], count: 12 });
+        burst(c.x, c.y, { emojis: ['⚡', '✨'], count: 8 });
+        splash(c.x, c.y - 40, '#ffd23f', { count: 16, spread: 90 });
+        ripple(c.x, c.y, '#ffd23f', 3);
       } else {
         st.cup = { ...st.cup, [id]: have + 1 };
         st.layers = [...st.layers, id];
         audio.pour(id);
-        burst(c.x, c.y - 20, { emojis: [INGREDIENTS[id].emoji, '✨'], count: 5, spread: 50 });
+        splash(c.x, c.y - 40, LIQUID[id].particle, { count: 12, spread: 55 });
+        ripple(c.x, c.y - 10, LIQUID[id].particle, 2.4);
         const complete = Object.entries(recipe.parts).every(([k, n]) => (st.cup[k] || 0) >= n);
         if (complete) {
           if (recipe.steps.length) {
@@ -468,8 +478,11 @@ export default function CoffeeBar({ active, shake }) {
     addCoins(coins);
 
     const c = centerOf(customerRef.current);
-    floatText(c.x, c.y - 20, `+${coins} 🪙`, 'text-amber-300');
-    setTimeout(() => floatText(c.x, c.y + 20, quality === 'PERFECT' ? 'PERFECT!' : quality === 'GOOD' ? 'Good' : 'Meh…', quality === 'PERFECT' ? 'text-emerald-300' : 'text-amber-200'), 120);
+    cust.quality = quality;
+    cust.outcome = 'happy';
+    floatText(c.x, c.y - 20, `+${coins} Coins!`, 'gold', st.feverLeft > 0);
+    setTimeout(() => floatText(c.x, c.y + 30, quality === 'PERFECT' ? 'PERFECT!' : quality === 'GOOD' ? 'Good!' : 'Meh…', quality === 'PERFECT' ? 'mint' : 'gold'), 140);
+    ripple(c.x, c.y, quality === 'PERFECT' ? '#9fe3c6' : '#ffe27a', 3.5);
     burst(c.x, c.y, { emojis: quality === 'PERFECT' ? ['💖', '🪙', '✨', '💕'] : ['🪙', '👍'], count: quality === 'PERFECT' ? 16 : 8, spread: 120 });
     audio.register();
     audio.voice(cust.voice, 1.15);
@@ -524,123 +537,130 @@ export default function CoffeeBar({ active, shake }) {
   // ───────── render ─────────
   const cust = s.customer;
   const remaining = cust ? Object.fromEntries(Object.entries(cust.recipe.parts).map(([k, n]) => [k, Math.max(0, n - (s.cup[k] || 0))])) : {};
-  const wallpaper = ITEMS.find((i) => i.id === save.equipped.wallpaper)?.preview || 'bg-[#fbe9d3]';
+  const wpItem = ITEMS.find((i) => i.id === save.equipped.wallpaper);
+  const wallpaper = !wpItem || wpItem.id === 'wp_cream' ? 'wp-cozy' : wpItem.preview;
   const neon = ITEMS.find((i) => i.id === save.equipped.neon);
-  const hat = ITEMS.find((i) => i.id === save.equipped.hat)?.emoji;
-  const glasses = ITEMS.find((i) => i.id === save.equipped.glasses)?.emoji;
+  const hat = save.equipped.hat;
+  const glasses = save.equipped.glasses;
   const totalParts = cust ? sumParts(cust.recipe.parts) : 1;
   const playing = s.status === 'playing';
+  const ready = playing && s.phase === 'serve';
+
+  const hint = !playing
+    ? ''
+    : s.phase === 'serve'
+      ? 'Swipe the cup to the customer — or ring the bell!'
+      : s.phase === 'craft'
+        ? ''
+        : inFever
+          ? 'Instant brew! Drop any correct ingredient'
+          : cust
+            ? 'Drag ingredients into the cup'
+            : 'Next customer coming…';
 
   return (
     <div className={`relative flex h-full flex-col ${inFever ? 'fever-mode' : ''}`}>
       {/* HUD */}
-      <div className="flex items-center justify-between px-3 pb-1 pt-1">
+      <div className="flex items-center justify-between px-3 pb-1.5 pt-0.5">
         <Hearts lives={s.lives} max={s.maxLives} />
         <div className="text-center">
-          <div className="text-[9px] font-black uppercase tracking-widest text-cream/70">Score</div>
-          <motion.div key={s.score} initial={{ scale: 1.3 }} animate={{ scale: 1 }} className="font-display text-xl font-black leading-none text-cream">
+          <div className="text-[9px] font-bold uppercase tracking-[0.2em] text-cream/60">Score</div>
+          <motion.div key={s.score} initial={{ scale: 1.35 }} animate={{ scale: 1 }} className="title-outline text-[22px] leading-none">
             {s.score.toLocaleString()}
           </motion.div>
         </div>
         <div className="flex items-center gap-1.5">
-          <span className="rounded-full bg-black/30 px-2 py-0.5 text-xs font-black text-cream">
+          <span className="rounded-full bg-black/25 px-2 py-0.5 text-[11px] font-bold text-cream shadow-[inset_0_1px_2px_rgba(0,0,0,.4)]">
             {WEATHER[s.weather].icon} {WEATHER[s.weather].label}
           </span>
-          <button type="button" onClick={togglePause} disabled={!playing} className="grid h-8 w-8 place-items-center rounded-full bg-black/30 text-sm text-cream disabled:opacity-30" aria-label="Pause">
-            ⏸
+          <button type="button" onClick={togglePause} disabled={!playing} className="btn btn-cream h-8 w-8 !rounded-full text-xs" aria-label="Pause">
+            ❚❚
           </button>
         </div>
       </div>
       <FeverGauge value={s.fever} feverLeft={s.feverLeft} combo={s.combo} />
 
       {/* Scene */}
-      <div className={`relative mx-3 mt-2 flex-1 overflow-hidden rounded-3xl border-4 border-mocha-700 ${wallpaper} ${inFever ? 'fever-scene' : ''}`} style={{ minHeight: 230 }}>
-        <div className="absolute left-3 top-3 h-[92px] w-[44%]">
-          <WeatherWindow weather={s.weather} fever={inFever} />
-        </div>
-        {neon && (
-          <div className="neon-sign absolute right-3 top-4 max-w-[48%] rotate-[-4deg] text-right font-display text-lg font-black leading-tight" style={{ color: neon.color, '--neon': neon.color }}>
-            {neon.text}
-          </div>
-        )}
-        {/* upcoming queue */}
-        <div className="absolute left-3 top-[110px] flex items-center gap-1 rounded-full bg-black/15 px-2 py-0.5 text-lg">
-          {s.queue.slice(0, 2).map((q) => (
-            <span key={q.uid} className={q.vip ? 'drop-shadow-[0_0_6px_gold]' : 'opacity-70'}>
-              {q.emoji}
-            </span>
-          ))}
-          {playing && s.queue.length > 0 && <span className="text-[10px] font-black uppercase text-mocha-900/60">next</span>}
-        </div>
-
-        {/* customer */}
-        <div className="absolute bottom-[54px] right-3 z-10">
-          <AnimatePresence custom={s.outcome}>
-            {cust && <Customer key={cust.uid} ref={customerRef} customer={cust} cup={s.cup} fever={inFever} />}
-          </AnimatePresence>
-        </div>
-
-        {/* counter + boss */}
-        <div ref={counterRef} className="absolute inset-x-0 bottom-0 h-[62px]">
-          <div className="absolute bottom-[40px] left-4 z-10">
-            <BossCat hat={hat} glasses={glasses} fever={inFever} mood={bossMood} />
-          </div>
-          <div className="absolute inset-x-0 bottom-0 h-[40px] border-t-[6px] border-mocha-300 bg-gradient-to-b from-mocha-500 to-mocha-700" />
-          <div className="absolute bottom-[40px] left-[38%] text-2xl">🧁</div>
-        </div>
-
-        <AnimatePresence>{banner && <WeatherBanner key={banner.id} weather={banner.weather} />}</AnimatePresence>
+      <div className={`relative mx-3 mt-2 flex-1 rounded-[30px] p-[5px] shadow-soft ${inFever ? 'fever-scene bg-gold-400' : 'bg-gradient-to-b from-roast-500 to-roast-700'}`} style={{ minHeight: 0 }}>
+        <CafeScene
+          wallpaper={wallpaper}
+          neon={neon}
+          weather={s.weather}
+          fever={inFever}
+          counterRef={counterRef}
+          counterSlot={
+            playing &&
+            s.queue.length > 0 && (
+              <div className="absolute bottom-[3px] left-1/2 flex -translate-x-1/2 items-end gap-0.5 rounded-t-xl bg-roast-950/35 px-2 pt-0.5">
+                <span className="mb-1 mr-1 font-display text-[10px] uppercase tracking-wider text-gold-200/90">Next</span>
+                {s.queue.slice(0, 2).map((q) => (
+                  <div key={q.uid} className={`h-[34px] overflow-hidden ${q.vip ? 'drop-shadow-[0_0_6px_gold]' : ''}`}>
+                    <Character look={q.look} size={32} still />
+                  </div>
+                ))}
+              </div>
+            )
+          }
+          characters={
+            <>
+              <div className="absolute bottom-[22px] left-0">
+                <BossCat hat={hat} glasses={glasses} fever={inFever} mood={bossMood} />
+              </div>
+              <div className="absolute bottom-[54px] left-[33%] origin-bottom scale-[0.78]">
+                <EspressoMachine fever={inFever} busy={s.phase === 'craft' || ready} />
+              </div>
+              <div className="absolute bottom-[26px] right-2">
+                <AnimatePresence custom={s.outcome}>
+                  {cust && <Customer key={cust.uid} ref={customerRef} customer={cust} cup={s.cup} fever={inFever} excited={ready} />}
+                </AnimatePresence>
+              </div>
+            </>
+          }
+          overlay={<AnimatePresence>{banner && <WeatherBanner key={banner.id} weather={banner.weather} />}</AnimatePresence>}
+        />
       </div>
 
       {/* Workstation */}
-      <div className="relative mx-3 mt-2 rounded-3xl bg-mocha-900/50 pb-1 pt-2">
+      <div className="panel-wood relative mx-3 mb-2 mt-2 pt-2">
         <div className="flex items-end justify-between px-4">
           <motion.button
             type="button"
-            whileTap={{ scale: 0.85 }}
+            whileTap={{ scale: 0.88 }}
             onClick={trash}
-            className="mb-2 grid h-12 w-12 place-items-center rounded-2xl border-b-4 border-rose-900 bg-rose-500 text-xl shadow-chunky disabled:opacity-40"
+            className="btn btn-berry mb-2 h-[46px] w-[46px]"
             disabled={!playing || s.phase !== 'assemble' || s.layers.length === 0}
             aria-label="Empty cup"
           >
-            🗑️
+            <TrashIcon size={26} />
           </motion.button>
-          <Cup
-            ref={cupRef}
-            layers={s.layers}
-            totalParts={totalParts}
-            hover={hoverCup}
-            ready={playing && s.phase === 'serve'}
-            fever={inFever}
-            shakeKey={cupShake}
-            onServeDrop={onServeDrop}
-          />
+          <div className="relative">
+            {/* barista mat */}
+            <div className="absolute -bottom-1 left-1/2 h-4 w-[130px] -translate-x-1/2 rounded-[50%] bg-gradient-to-b from-mint-600 to-mint-800 shadow-[inset_0_2px_0_rgba(255,255,255,.25)]" />
+            <Cup
+              ref={cupRef}
+              layers={s.layers}
+              totalParts={totalParts}
+              hover={hoverCup}
+              ready={ready}
+              fever={inFever}
+              shakeKey={cupShake}
+              onServeDrop={onServeDrop}
+            />
+          </div>
           <motion.button
             type="button"
-            whileTap={{ scale: 0.85 }}
+            whileTap={{ scale: 0.88 }}
             onClick={serve}
-            disabled={!playing || s.phase !== 'serve'}
-            animate={s.phase === 'serve' && playing ? { scale: [1, 1.12, 1] } : { scale: 1 }}
-            transition={{ repeat: s.phase === 'serve' ? Infinity : 0, duration: 0.7 }}
-            className="mb-2 grid h-12 w-12 place-items-center rounded-2xl border-b-4 border-emerald-900 bg-emerald-500 text-xl shadow-chunky disabled:opacity-40"
+            disabled={!ready}
+            animate={ready ? { scale: [1, 1.12, 1], rotate: [0, -8, 8, 0] } : { scale: 1, rotate: 0 }}
+            transition={{ repeat: ready ? Infinity : 0, duration: 0.8 }}
+            className={`btn btn-mint mb-2 h-[46px] w-[46px] ${ready ? 'shadow-glow' : ''}`}
             aria-label="Serve"
           >
-            🛎️
+            <BellIcon size={30} />
           </motion.button>
         </div>
-        <div className="h-5 text-center text-[11px] font-black uppercase tracking-wide text-cream/80">
-          {!playing
-            ? ''
-            : s.phase === 'serve'
-              ? '⬆️ Swipe the cup to the customer (or tap 🛎️)'
-              : s.phase === 'craft'
-                ? ''
-                : inFever
-                  ? '⚡ INSTANT BREW — drop any correct ingredient!'
-                  : cust
-                    ? 'Drag ingredients into the cup'
-                    : 'Next customer coming…'}
-        </div>
+        <div className="h-5 pt-0.5 text-center font-display text-[12px] tracking-wide text-gold-200 drop-shadow-[0_1px_1px_rgba(0,0,0,.6)]">{hint}</div>
         <DragAndDropTray
           cupRef={cupRef}
           onAdd={handleAdd}
@@ -652,14 +672,7 @@ export default function CoffeeBar({ active, shake }) {
         />
         <AnimatePresence>
           {playing && s.phase === 'craft' && cust && (
-            <QTECrafting
-              key={s.orderToken}
-              steps={cust.recipe.steps}
-              upgrades={save.upgrades}
-              paused={s.paused}
-              onStage={handleStage}
-              onDone={handleCraftDone(s.orderToken)}
-            />
+            <QTECrafting key={s.orderToken} steps={cust.recipe.steps} upgrades={save.upgrades} paused={s.paused} onStage={handleStage} onDone={handleCraftDone(s.orderToken)} />
           )}
         </AnimatePresence>
       </div>
@@ -669,10 +682,11 @@ export default function CoffeeBar({ active, shake }) {
         {toast && (
           <motion.div
             key={toast}
-            initial={{ y: -40, opacity: 0 }}
-            animate={{ y: 0, opacity: 1 }}
+            initial={{ y: -40, opacity: 0, scale: 0.9 }}
+            animate={{ y: 0, opacity: 1, scale: 1 }}
             exit={{ y: -40, opacity: 0 }}
-            className="pointer-events-none absolute left-1/2 top-14 z-50 w-[88%] -translate-x-1/2 rounded-2xl border-2 border-amber-300 bg-mocha-900/95 px-3 py-2 text-center text-sm font-black text-amber-200 shadow-glow"
+            className="card pointer-events-none absolute left-1/2 top-14 z-50 w-[88%] px-3 py-2 text-center font-display text-[15px] text-roast-800"
+            style={{ x: '-50%', boxShadow: '0 0 0 3px #ffd23f, 0 0 22px rgba(255,210,63,.7), 0 10px 20px -10px rgba(0,0,0,.6)' }}
           >
             {toast}
           </motion.div>
@@ -681,7 +695,7 @@ export default function CoffeeBar({ active, shake }) {
 
       {/* Overlays */}
       <AnimatePresence>
-        {s.status === 'ready' && <StartOverlay key="start" onStart={startShift} save={save} bonuses={bonuses} />}
+        {s.status === 'ready' && <StartOverlay key="start" onStart={startShift} save={save} bonuses={bonuses} hat={hat} glasses={glasses} />}
         {s.status === 'over' && <GameOverOverlay key="over" session={s} onRestart={startShift} />}
         {playing && s.paused && <PauseOverlay key="pause" onResume={togglePause} onQuit={endShift} />}
       </AnimatePresence>
@@ -689,16 +703,17 @@ export default function CoffeeBar({ active, shake }) {
   );
 }
 
-function Overlay({ children }) {
+export function Overlay({ children }) {
   return (
     <motion.div
-      className="absolute inset-0 z-[60] flex items-center justify-center bg-mocha-900/70 p-5 backdrop-blur-sm"
+      className="absolute inset-0 z-[60] flex items-center justify-center bg-roast-950/70 p-5 backdrop-blur-[3px]"
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
     >
       <motion.div
-        className="w-full rounded-[28px] border-4 border-mocha-300 bg-cream p-5 text-center text-mocha-900 shadow-2xl"
+        className="sheet relative w-full rounded-[32px] p-5 text-center text-roast-800"
+        style={{ boxShadow: 'inset 0 3px 0 #fff, inset 0 -5px 0 rgba(192,138,91,.25), 0 0 0 4px #c08a5b, 0 0 0 8px #5c331d, 0 24px 40px -12px rgba(0,0,0,.8)' }}
         initial={{ scale: 0.7, y: 40 }}
         animate={{ scale: 1, y: 0 }}
         exit={{ scale: 0.8, y: 30 }}
@@ -710,46 +725,42 @@ function Overlay({ children }) {
   );
 }
 
-function BigButton({ children, onClick, tone = 'amber' }) {
-  const tones = {
-    amber: 'border-amber-700 from-amber-300 to-amber-500 text-mocha-900',
-    rose: 'border-rose-900 from-rose-400 to-rose-600 text-white',
-  };
+export function BigButton({ children, onClick, tone = 'gold' }) {
   return (
-    <motion.button
-      type="button"
-      whileTap={{ scale: 0.92, y: 3 }}
-      onClick={onClick}
-      className={`w-full rounded-2xl border-b-[6px] bg-gradient-to-b px-6 py-3 font-display text-2xl font-black shadow-chunky ${tones[tone]}`}
-    >
+    <motion.button type="button" whileTap={{ scale: 0.95 }} onClick={onClick} className={`btn btn-${tone} w-full py-3.5 font-display text-2xl`}>
       {children}
     </motion.button>
   );
 }
 
-function StartOverlay({ onStart, save, bonuses }) {
+function StatTile({ icon, value, label, accent }) {
+  return (
+    <div className={`card-inset flex flex-col items-center px-1 py-2 ${accent ? '!bg-gradient-to-b !from-gold-200 !to-gold-300' : ''}`}>
+      <div className="h-6">{icon}</div>
+      <div className="font-display text-lg leading-tight text-roast-800">{value}</div>
+      <div className="text-[10px] font-bold uppercase tracking-wide text-roast-500">{label}</div>
+    </div>
+  );
+}
+
+function StartOverlay({ onStart, save, bonuses, hat, glasses }) {
   return (
     <Overlay>
-      <motion.div className="text-7xl" animate={{ rotate: [-6, 6, -6] }} transition={{ repeat: Infinity, duration: 1.4 }}>
-        😺☕
-      </motion.div>
-      <h1 className="mt-2 font-display text-3xl font-black leading-none">Meow Barista</h1>
-      <div className="font-display text-lg font-bold text-mocha-500">Purrfect Tycoon</div>
-      <div className="my-3 grid grid-cols-3 gap-2 text-xs font-bold">
-        <div className="rounded-xl bg-mocha-100 p-2">
-          🏆<div className="text-base font-black">{save.highScore.toLocaleString()}</div>Best
-        </div>
-        <div className="rounded-xl bg-mocha-100 p-2">
-          🔥<div className="text-base font-black">{save.bestCombo}</div>Combo
-        </div>
-        <div className="rounded-xl bg-mocha-100 p-2">
-          🐾<div className="text-base font-black">×{bonuses.coinMult.toFixed(2)}</div>Coins
-        </div>
+      <div className="relative -mt-16 mb-1 flex justify-center">
+        <div className="absolute top-8 h-28 w-28 rounded-full bg-gold-300/60 blur-2xl" />
+        <Character look="boss" expr="happy" size={120} hat={hat} glasses={glasses} />
       </div>
-      <ul className="mb-4 space-y-1 text-left text-[13px] font-semibold leading-snug">
-        <li>🫳 <b>Drag</b> (or tap) ingredients into the cup to match the order.</li>
-        <li>⚙️ <b>Grind</b> fast &amp; ♨️ <b>froth</b> in the green zone for PERFECT tips.</li>
-        <li>⬆️ <b>Swipe</b> the cup to the customer before patience runs out.</li>
+      <h1 className="title-outline text-[34px] leading-none">Meow Barista</h1>
+      <div className="mt-1 font-display text-lg text-mint-600">~ Purrfect Tycoon ~</div>
+      <div className="my-3 grid grid-cols-3 gap-2">
+        <StatTile icon={<span className="text-lg">🏆</span>} value={save.highScore.toLocaleString()} label="Best" />
+        <StatTile icon={<span className="text-lg">🔥</span>} value={save.bestCombo} label="Combo" />
+        <StatTile icon={<CoinIcon size={22} />} value={`×${bonuses.coinMult.toFixed(2)}`} label="Coins" accent />
+      </div>
+      <ul className="card-inset mb-4 space-y-1.5 p-3 text-left text-[13px] font-medium leading-snug text-roast-700">
+        <li>☕ <b>Drag</b> (or tap) ingredients into the cup to match the order.</li>
+        <li>⚙️ <b>Grind</b> fast &amp; <b>froth</b> in the green zone for PERFECT tips.</li>
+        <li>🛎️ <b>Swipe</b> the cup to the customer before patience runs out.</li>
         <li>🔥 Chain PERFECTs to fill <b>Fever</b>: ×3 coins + instant brewing!</li>
       </ul>
       <BigButton onClick={onStart}>Open the Café!</BigButton>
@@ -760,19 +771,21 @@ function StartOverlay({ onStart, save, bonuses }) {
 function GameOverOverlay({ session, onRestart }) {
   return (
     <Overlay>
-      <div className="text-6xl">{session.newRecord ? '🏆' : '😿'}</div>
-      <h2 className="font-display text-3xl font-black">{session.newRecord ? 'New High Score!' : 'Shift Over'}</h2>
-      <motion.div className="font-display text-4xl font-black text-amber-600" initial={{ scale: 0 }} animate={{ scale: [0, 1.3, 1] }} transition={{ delay: 0.2 }}>
+      <div className="relative -mt-16 mb-1 flex justify-center">
+        <Character look="boss" expr={session.newRecord ? 'love' : 'sad'} size={110} />
+      </div>
+      <h2 className="title-outline text-3xl">{session.newRecord ? 'New High Score!' : 'Shift Over'}</h2>
+      <motion.div className="float-text ft-gold ft-big mt-1" initial={{ scale: 0 }} animate={{ scale: [0, 1.3, 1] }} transition={{ delay: 0.2 }}>
         {session.score.toLocaleString()}
       </motion.div>
-      <div className="my-3 grid grid-cols-2 gap-2 text-sm font-bold">
-        <div className="rounded-xl bg-mocha-100 p-2">☕ {session.served} served</div>
-        <div className="rounded-xl bg-mocha-100 p-2">⭐ {session.perfects} perfect</div>
-        <div className="rounded-xl bg-mocha-100 p-2">🔥 {session.maxCombo} max combo</div>
-        <div className="rounded-xl bg-amber-200 p-2">🪙 +{session.coins} coins</div>
+      <div className="my-3 grid grid-cols-2 gap-2">
+        <StatTile icon={<span>☕</span>} value={session.served} label="Served" />
+        <StatTile icon={<span>⭐</span>} value={session.perfects} label="Perfect" />
+        <StatTile icon={<span>🔥</span>} value={session.maxCombo} label="Max combo" />
+        <StatTile icon={<CoinIcon size={20} />} value={`+${session.coins}`} label="Coins" accent />
       </div>
-      {session.vipsServed.length > 0 && <div className="mb-3 text-sm font-bold">👑 VIPs served: {session.vipsServed.length}</div>}
-      <p className="mb-3 text-xs font-semibold text-mocha-500">Spend coins in the Shop &amp; Garden to boost your next shift!</p>
+      {session.vipsServed.length > 0 && <div className="mb-3 font-display text-sm text-gold-600">★ VIPs served: {session.vipsServed.length}</div>}
+      <p className="mb-3 text-xs font-medium text-roast-500">Spend coins in the Shop &amp; Garden to boost your next shift!</p>
       <BigButton onClick={onRestart}>Play Again</BigButton>
     </Overlay>
   );
@@ -781,15 +794,18 @@ function GameOverOverlay({ session, onRestart }) {
 function PauseOverlay({ onResume, onQuit }) {
   return (
     <Overlay>
-      <div className="text-6xl">😴</div>
-      <h2 className="mb-4 font-display text-3xl font-black">Paws-ed</h2>
+      <div className="relative -mt-16 mb-1 flex justify-center">
+        <Character look="boss" expr="happy" size={104} />
+      </div>
+      <h2 className="title-outline mb-4 text-3xl">Paws-ed</h2>
       <div className="space-y-3">
-        <BigButton onClick={onResume}>Resume</BigButton>
-        <BigButton onClick={onQuit} tone="rose">
+        <BigButton onClick={onResume} tone="mint">
+          Resume
+        </BigButton>
+        <BigButton onClick={onQuit} tone="berry">
           End Shift
         </BigButton>
       </div>
     </Overlay>
   );
 }
-

@@ -1,6 +1,8 @@
 # Meow Barista: Purrfect Tycoon ☕😺
 
-A mobile-first cat-café tycoon game built with React 18, Tailwind CSS 3, Framer Motion 11 and the Web Audio API. It uses no image or audio assets: the art is emoji and CSS, and every sound is synthesized at runtime.
+A mobile-first cat-café tycoon game built with React 18, Tailwind CSS 3, Framer Motion 11 and the Web Audio API. It uses no image or audio files: every character, prop and icon is hand-drawn inline SVG, and every sound is synthesized at runtime.
+
+**Art direction:** a cozy, hand-crafted café. Roasted-coffee browns, soft cream, pastel mint, warm amber lamp light and gold for Fever Mode. Buttons and cards use a soft "clay" look, and the café scene is built in layers: wallpaper, window light rays, pendant lamps, hanging plants and a wooden counter. Every character shares one vector rig with blinking eyes, breathing and swaying, and reacts to what happens (wide-eyed when a drink is ready, heart eyes for a PERFECT serve, angry when kept waiting). Text and icons use Lilita One and Fredoka from Google Fonts, with rounded system fonts as a fallback when offline.
 
 ## Run
 
@@ -35,7 +37,10 @@ src/
     CoffeeBar.jsx            the shift: game loop, customers, scoring, combo, Fever
     DragAndDropTray.jsx      draggable / tappable ingredients
     QTECrafting.jsx          Grind + Froth minigames
-    Cup.jsx, Customer.jsx    drop target and customer with patience bar and order bubble
+    Cup.jsx, Customer.jsx    glass mug with glowing liquid layers; reactive customer + order bubble
+    CafeScene.jsx            layered café interior (lamps, plants, window light, counter, machine)
+    Avatars.jsx              shared SVG character rig, expressions, hats & glasses
+    Icons.jsx                SVG ingredient / coin / heart / tool icons
     WeatherSystem.jsx        time-of-day / weather window and cycle logic
     ShopModal.jsx            swipe-down bottom-sheet shop
     MeowGarden.jsx           cat hotel
