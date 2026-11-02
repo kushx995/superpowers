@@ -9,7 +9,8 @@ Bố cục:
   • Tab 1   : Tính lợi nhuận 1 sản phẩm + what-if
   • Tab 2   : Quét sản phẩm (Amazon → VeRO → eBay → định giá → chấm điểm), chọn sản phẩm thắng
   • Tab 3   : AI Listing (Title SEO + HTML Description), nút "Đăng lên eBay ngay", Export CSV Bulk Upload
-  • Tab 4   : Kết nối eBay (token OAuth, kho hàng, business policies) cho tính năng Auto Listing
+  • Tab 4   : Đang bán & Monitor — listing đã đăng (SQLite), canh giá/tồn kho Amazon, tự cập nhật eBay
+  • Tab 5   : Kết nối eBay (token OAuth, kho hàng, business policies) cho tính năng Auto Listing
 
 Kết quả quét được lưu trong st.session_state → Streamlit chạy lại script mỗi lần bạn
 bấm/chỉnh gì đó nhưng KHÔNG gọi lại API (tiết kiệm quota/tiền).
@@ -17,7 +18,9 @@ bấm/chỉnh gì đó nhưng KHÔNG gọi lại API (tiết kiệm quota/tiền
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import json
+import os
+from dataclasses import asdict, dataclass
 
 import pandas as pd
 import streamlit as st
@@ -32,10 +35,14 @@ from calculator import (
     recommend_price,
 )
 from config import settings
+from database import (
+    ACTIVE, DEFAULT_DB_PATH, ENDED, MONITORED_STATUSES, PAUSED_OOS, STATUS_LABELS, Database, ListingRecord,
+)
 from ebay_export import ExportRow, ExportSettings, to_csv
 from ebay_publisher import (
     STEP_LABELS, EbayApiError, EbayPublisher, ListingRequest, PublisherConfig, PublishResult, parse_aspects_text,
 )
+from monitor import ACTION_LABELS, MonitorSettings, build_source, run_once
 from listing_generator import EBAY_TITLE_MAX, ListingGenerator, clean_title, contains_sensitive, sanitize_html
 from pipeline import ScanConfig, scan
 from scraper import (
@@ -221,6 +228,8 @@ def tab_scanner(s: SidebarState) -> None:
         bar.empty()
         st.session_state["scan"] = results
         st.session_state["scan_keyword"] = keyword
+        st.session_state["scan_fees"] = s.fees           # giả định phí lúc quét → lưu vào DB khi đăng
+        st.session_state["scan_target"] = s.target_margin
         st.session_state.pop("listings", None)
 
     results = st.session_state.get("scan")
@@ -263,7 +272,7 @@ def tab_scanner(s: SidebarState) -> None:
 # ---------------------------------------------------------------------------
 # TAB 3 — AI LISTING & EXPORT
 # ---------------------------------------------------------------------------
-def tab_listing() -> None:
+def tab_listing(s: SidebarState) -> None:
     st.subheader("📝 AI Listing Generator & Export eBay Bulk Upload")
     results = st.session_state.get("scan") or []
     selected = [r for r in results if r.product.asin in st.session_state.get("selected_asins", set())
@@ -332,7 +341,7 @@ def tab_listing() -> None:
             export_rows.append(ExportRow(r.product.asin, title, html_clean, price, r.product.brand,
                                          r.product.gtin, tuple(r.product.image_urls)))
             st.divider()
-            publish_box(r, lst, title, html_clean, price)
+            publish_box(r, lst, title, html_clean, price, s)
 
     st.divider()
     st.markdown("#### ⬇️ Export CSV cho eBay (Seller Hub → Reports → Uploads)")
@@ -399,7 +408,7 @@ def show_api_exception(exc: EbayApiError) -> None:
                                                         errors=exc.errors).error_rows())
 
 
-def publish_box(r, lst, title: str, html_clean: str, price: float) -> None:
+def publish_box(r, lst, title: str, html_clean: str, price: float, s: SidebarState) -> None:
     """Khối "Đăng lên eBay ngay" cho một sản phẩm."""
     cfg, asin = pub_config(), r.product.asin
     env_badge = "🧪 SANDBOX" if cfg.environment == "sandbox" else "🔴 PRODUCTION"
@@ -465,18 +474,154 @@ def publish_box(r, lst, title: str, html_clean: str, price: float) -> None:
     if st.button("🚀 Đăng lên eBay ngay", key=f"pub_{asin}", on_click=oc, type="primary", disabled=bool(blockers)):
         with st.spinner("Đang gửi lên eBay..."):
             ss[f"res_{asin}"] = pub.publish(req, required)
+        if ss[f"res_{asin}"].success:
+            save_published(r, req, ss[f"res_{asin}"], s)
 
     res: PublishResult | None = ss.get(f"res_{asin}")
     if res is None:
         return
     if res.success:
-        st.success(f"✅ Đã đăng thành công! Listing ID **{res.listing_id}** → [{res.url}]({res.url})")
+        st.success(f"✅ Đã đăng thành công! Listing ID **{res.listing_id}** → [{res.url}]({res.url}) · "
+                   "đã lưu vào database, monitor sẽ theo dõi listing này (tab **📊 Đang bán & Monitor**).")
     else:
         show_ebay_error(res.step, res.status, res.error_rows())
     if res.warnings:
         st.warning("Cảnh báo từ eBay: " + "; ".join(f"{w.error_id}: {w.message}" for w in res.warnings))
     if res.log:
         st.caption(" · ".join(res.log))
+
+
+def get_db() -> Database:
+    """Database dùng chung với monitor.py (đổi vị trí bằng biến môi trường ARBITRAGE_DB)."""
+    return Database(os.environ.get("ARBITRAGE_DB", DEFAULT_DB_PATH))
+
+
+def save_published(r, req: ListingRequest, res: PublishResult, s: SidebarState) -> None:
+    """Lưu listing vừa đăng + toàn bộ giả định tài chính để monitor tính lại biên sau này."""
+    b, cfg = r.recommendation.breakdown, pub_config()
+    fees = st.session_state.get("scan_fees") or s.fees
+    target = st.session_state.get("scan_target") or s.target_margin
+    cost = ProductCost(r.product.amazon_price, round(b.amazon_tax / b.amazon_price, 4) if b.amazon_price else 0.0,
+                       b.shipping_cost, b.other_cost, r.buffer_rate)
+    db = get_db()
+    db.save(ListingRecord(
+        sku=req.sku, asin=r.product.asin, environment=cfg.environment, ebay_item_id=res.listing_id,
+        offer_id=res.offer_id, title=req.title, source=r.product.source,
+        buy_price=r.product.amazon_price, current_buy_price=r.product.amazon_price,
+        sell_price=req.price, min_price=r.recommendation.min_price, target_margin=target,
+        current_margin=analyze_profit(req.price, cost, fees).net_margin,
+        quantity=req.quantity, default_quantity=req.quantity,
+        amazon_tax_rate=cost.amazon_sales_tax_rate, price_buffer_rate=cost.price_buffer_rate,
+        shipping_cost=cost.shipping_cost, other_cost=cost.other_cost,
+        fees_json=json.dumps(asdict(fees)), status=ACTIVE, in_stock=r.product.in_stock,
+    ))
+    db.log(req.sku, "published", f"Đăng listing {res.listing_id} giá ${req.price:.2f} × {req.quantity}")
+
+
+def tab_monitor(s: SidebarState) -> None:
+    st.subheader("📊 Listing đang bán & Monitor giá / tồn kho")
+    db, cfg, ss = get_db(), pub_config(), st.session_state
+    envs = ["sandbox", "production"]
+    env = st.radio("Môi trường", envs, index=envs.index(cfg.environment), horizontal=True, key="mon_env")
+
+    counts = db.counts(env)
+    cols = st.columns(len(STATUS_LABELS))
+    for col, (status, label) in zip(cols, STATUS_LABELS.items()):
+        col.metric(label, counts.get(status, 0))
+
+    records = db.all(environment=env)
+    if not records:
+        st.info("Chưa có listing nào. Đăng sản phẩm bằng nút **🚀 Đăng lên eBay ngay** ở tab Listing — "
+                "listing đăng thành công sẽ tự động được lưu và theo dõi.")
+        return
+
+    item_url = "https://sandbox.ebay.com/itm/" if env == "sandbox" else "https://www.ebay.com/itm/"
+    df = pd.DataFrame([{
+        "SKU": r.sku, "ASIN": r.asin, "eBay": f"{item_url}{r.ebay_item_id}" if r.ebay_item_id else None,
+        "Tiêu đề": r.title, "Trạng thái": STATUS_LABELS.get(r.status, r.status),
+        "Giá mua gốc": r.buy_price, "Giá Amazon mới nhất": r.current_buy_price,
+        "Δ giá Amazon %": None if r.current_buy_price is None else round((r.current_buy_price / r.buy_price - 1) * 100, 1),
+        "Giá bán eBay": r.sell_price,
+        "Biên hiện tại %": None if r.current_margin is None else round(r.current_margin * 100, 1),
+        "Mục tiêu %": round(r.target_margin * 100), "SL": r.quantity,
+        "Kiểm tra lần cuối": r.last_checked_at, "Ghi chú": r.note,
+    } for r in records])
+    money = st.column_config.NumberColumn(format="$%.2f")
+    st.dataframe(df, hide_index=True, use_container_width=True, column_config={
+        "eBay": st.column_config.LinkColumn(display_text="Mở listing"),
+        "Giá mua gốc": money, "Giá Amazon mới nhất": money, "Giá bán eBay": money,
+    })
+
+    # -- Chạy monitor ngay ---------------------------------------------------------------
+    st.markdown("#### ▶️ Kiểm tra giá & tồn kho Amazon")
+    sources = [k for k, ok in settings.available_product_sources().items() if ok]
+    c1, c2, c3, c4 = st.columns(4)
+    source_name = c1.selectbox("Nguồn dữ liệu Amazon", sources, format_func=PRODUCT_SOURCE_LABELS.get,
+                               help="'Dữ liệu giả lập' mô phỏng tăng giá / hết hàng ngẫu nhiên để thử tính năng.")
+    dry_run = c2.toggle("Chạy thử (không sửa eBay)", value=True)
+    max_inc = c3.slider("Tăng giá tối đa mỗi lần (%)", 5, 100, 25, 5,
+                        help="Cần tăng nhiều hơn mức này → tạm dừng (SL 0) thay vì tăng giá sốc.")
+    pause_err = c4.checkbox("Tạm dừng khi không lấy được dữ liệu", value=False)
+    blockers = []
+    if not dry_run and not cfg.can_authenticate:
+        blockers.append("Chưa kết nối eBay (tab 🔌) — chỉ chạy thử được.")
+    if not dry_run and env != cfg.environment:
+        blockers.append(f"Cấu hình eBay đang ở '{cfg.environment}', khác môi trường đang xem '{env}'.")
+    if not dry_run and env == "production":
+        if not st.checkbox("⚠️ Tôi xác nhận cho phép monitor sửa giá/số lượng trên tài khoản eBay THẬT", key="mon_confirm"):
+            blockers.append("Chưa tick xác nhận Production.")
+    for b in blockers:
+        st.warning(b)
+    if st.button("▶️ Chạy kiểm tra ngay", type="primary", disabled=bool(blockers)):
+        with st.spinner("Đang kiểm tra Amazon..."):
+            try:
+                ss["mon_report"] = run_once(
+                    db, build_source(source_name), None if dry_run else get_publisher(),
+                    MonitorSettings(dry_run=dry_run, max_increase_pct=max_inc / 100, pause_on_fetch_error=pause_err),
+                    environment=env)
+            except (SourceError, ValueError) as exc:
+                st.error(f"Không chạy được monitor: {exc}")
+        st.rerun()  # vẽ lại bảng phía trên với dữ liệu mới
+
+    report = ss.get("mon_report")
+    if report is not None:
+        (st.info if report.dry_run else st.success)(report.summary())
+        for e in report.fetch_errors:
+            st.error(f"Lỗi nguồn dữ liệu: {e}")
+        rows = report.rows()
+        changed = [r for r in rows if r["Hành động"] != ACTION_LABELS["none"]]
+        st.dataframe(pd.DataFrame(changed or rows), hide_index=True, use_container_width=True,
+                     column_config={"Giá Amazon": money, "Giá mới": money})
+        if report.dry_run and changed:
+            st.caption("Tắt **Chạy thử** rồi chạy lại để áp dụng các thay đổi này lên eBay.")
+
+    # -- Lịch sử & thao tác tay ---------------------------------------------------------------
+    st.markdown("#### 🕘 Lịch sử & thao tác")
+    sku = st.selectbox("Chọn SKU", [r.sku for r in records],
+                       format_func=lambda k: f"{k} — {next(r.title for r in records if r.sku == k)[:60]}")
+    rec = next(r for r in records if r.sku == sku)
+    m1, m2 = st.columns(2)
+    if rec.status != ENDED and m1.button("⚫ Ngừng theo dõi SKU này"):
+        db.update(sku, status=ENDED)
+        db.log(sku, "manual", "Ngừng theo dõi (listing trên eBay KHÔNG bị gỡ)")
+        st.rerun()
+    if rec.status not in MONITORED_STATUSES and m2.button("↩️ Theo dõi lại"):
+        db.update(sku, status=ACTIVE if rec.quantity > 0 else PAUSED_OOS)
+        db.log(sku, "manual", "Theo dõi lại")
+        st.rerun()
+    events = db.events(sku)
+    if events:
+        st.dataframe(pd.DataFrame(events)[["ts", "kind", "old_value", "new_value", "message"]].rename(columns={
+            "ts": "Thời điểm (UTC)", "kind": "Loại", "old_value": "Cũ", "new_value": "Mới", "message": "Nội dung"}),
+            hide_index=True, use_container_width=True)
+
+    with st.expander("⏰ Chạy monitor tự động theo lịch"):
+        st.markdown(
+            "Giao diện chỉ chạy khi bạn bấm. Để canh giá **24/7**, chạy `monitor.py` ở một cửa sổ terminal riêng:\n\n"
+            "```bash\npython monitor.py --once                 # chạy thử 1 vòng (không sửa eBay)\n"
+            "python monitor.py --apply --interval 60 --source keepa   # chạy liên tục mỗi 60 phút\n```\n"
+            "Hoặc dùng **Task Scheduler** (Windows) / **cron** (macOS/Linux) gọi `python monitor.py --once --apply` "
+            "mỗi giờ. Monitor đọc token từ `config.json` và ghi nhật ký vào `monitor.log`.")
 
 
 def tab_connection() -> None:
@@ -577,14 +722,17 @@ def tab_connection() -> None:
 def main() -> None:
     st.title("💰 Amazon → eBay Profit Finder")
     s = sidebar()
-    t1, t2, t3, t4 = st.tabs(["🧮 Tính lợi nhuận", "🔎 Quét sản phẩm", "📝 Listing & Export", "🔌 Kết nối eBay"])
+    t1, t2, t3, t4, t5 = st.tabs(["🧮 Tính lợi nhuận", "🔎 Quét sản phẩm", "📝 Listing & Export",
+                                  "📊 Đang bán & Monitor", "🔌 Kết nối eBay"])
     with t1:
         tab_calculator(s)
     with t2:
         tab_scanner(s)
     with t3:
-        tab_listing()
+        tab_listing(s)
     with t4:
+        tab_monitor(s)
+    with t5:
         tab_connection()
 
 

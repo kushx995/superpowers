@@ -4,3 +4,6 @@ __pycache__/
 .venv/
 *.csv.tmp
 config.json
+data/*.db
+data/*.db-*
+monitor.log

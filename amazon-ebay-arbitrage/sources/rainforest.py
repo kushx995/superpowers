@@ -51,6 +51,16 @@ class RainforestSource(ProductSource):
                 pass  # giữ bản tóm tắt nếu lỗi chi tiết
         return products
 
+    def get_products(self, asins: list[str]) -> list[AmazonProduct]:
+        """1 credit / ASIN. ASIN lỗi bị bỏ qua (monitor sẽ ghi nhận "không có dữ liệu")."""
+        out = []
+        for asin in asins:
+            try:
+                out.append(self.get_product(asin))
+            except SourceError:
+                continue
+        return out
+
     def get_product(self, asin: str) -> AmazonProduct:
         data = self.http.get(self.BASE, params={
             "api_key": self.api_key, "type": "product",

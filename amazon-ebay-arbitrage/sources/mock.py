@@ -71,6 +71,35 @@ class MockProductSource(ProductSource):
         return products
 
 
+class MockMonitorSource(MockProductSource):
+    """Giả lập giá Amazon THAY ĐỔI theo thời gian để demo monitor (không dùng cho quét).
+
+    `price_hints` = {asin: giá Amazon gần nhất} (monitor nạp từ database). Mỗi phút một "phiên":
+      ~10% hết hàng · ~25% tăng giá 5–30% · còn lại dao động ±3%.
+    """
+
+    def __init__(self, price_hints: dict[str, float] | None = None, seed: str | None = None):
+        self.price_hints = price_hints or {}
+        self.seed = seed  # cố định để test; None = đổi theo từng phút
+
+    def get_products(self, asins: list[str]) -> list[AmazonProduct]:
+        bucket = self.seed if self.seed is not None else str(int(time.time() // 60))
+        out = []
+        for asin in asins:
+            rng = _rng("monitor", asin, bucket)
+            base = self.price_hints.get(asin) or round(_rng(asin).uniform(6, 70), 2)
+            roll = rng.random()
+            if roll < 0.10:
+                price, in_stock = None, False
+            elif roll < 0.35:
+                price, in_stock = round(base * rng.uniform(1.05, 1.30), 2), True
+            else:
+                price, in_stock = round(base * rng.uniform(0.97, 1.03), 2), True
+            out.append(AmazonProduct(asin=asin, title=f"Mock {asin}", amazon_price=price,
+                                     in_stock=in_stock, is_prime=True, source="mock"))
+        return out
+
+
 class MockMarketSource(MarketSource):
     name = "mock"
 

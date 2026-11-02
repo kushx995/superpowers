@@ -157,3 +157,15 @@ def test_build_query_drops_stopwords():
 def test_reference_price_fallback_order():
     m = EbayMarketData(query="q", active_lowest=10, active_p25=12, sold_median_30d=15)
     assert [m.reference_price(s) for s in ("sold_median", "active_p25", "active_lowest")] == [15, 12, 10]
+
+
+def test_paapi_get_items_batches_of_ten():
+    item = lambda a: {"ASIN": a, "ItemInfo": {"Title": {"DisplayValue": "t"}},  # noqa: E731
+                      "OffersV2": {"Listings": [{"Price": {"Money": {"Amount": 5.0}}, "Availability": {"Type": "IN_STOCK"}}]}}
+    s = FakeSession({"paapi5/getitems": [(200, {"ItemsResult": {"Items": [item(f"A{i}") for i in range(10)]}}),
+                                         (200, {"ItemsResult": {"Items": [item("A10")]}})]})
+    out = AmazonPAAPISource("a", "b", "tag-20", http=HttpClient(s)).get_products([f"A{i}" for i in range(11)])
+    assert len(out) == 11 and out[10].asin == "A10" and out[0].amazon_price == 5.0
+    bodies = [__import__("json").loads(c[2]["data"]) for c in s.calls]
+    assert [len(b["ItemIds"]) for b in bodies] == [10, 1]
+    assert "GetItems" in s.calls[0][2]["headers"]["x-amz-target"]

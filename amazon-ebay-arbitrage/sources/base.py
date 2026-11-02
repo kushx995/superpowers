@@ -117,6 +117,13 @@ class ProductSource(ABC):
     def search(self, keyword: str, category: str = "All", limit: int = 20) -> list[AmazonProduct]:
         """Tìm sản phẩm theo từ khóa/danh mục."""
 
+    def get_products(self, asins: list[str]) -> list[AmazonProduct]:
+        """Tra cứu lại giá & tồn kho theo danh sách ASIN (dùng cho monitor).
+
+        ASIN không tìm thấy sẽ KHÔNG có trong kết quả → monitor coi là "không có dữ liệu".
+        """
+        raise NotImplementedError(f"Nguồn '{self.name}' chưa hỗ trợ tra cứu theo ASIN")
+
 
 class MarketSource(ABC):
     """Nguồn dữ liệu phía eBay (đối thủ + nhu cầu)."""

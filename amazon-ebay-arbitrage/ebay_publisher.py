@@ -313,7 +313,18 @@ STEP_LABELS = {
     "auth": "Xác thực", "location": "Kho hàng", "inventory_item": "Tạo sản phẩm (inventory item)",
     "offer": "Tạo/cập nhật offer", "publish": "Đăng bán (publish)", "validate": "Kiểm tra trước khi đăng",
     "policies": "Đọc business policies", "taxonomy": "Danh mục / item specifics",
+    "update": "Cập nhật giá / số lượng",
 }
+
+
+@dataclass
+class PriceQtyUpdate:
+    """Một yêu cầu cập nhật cho listing đang chạy (None = giữ nguyên trường đó)."""
+
+    sku: str
+    offer_id: str
+    price: Optional[float] = None
+    quantity: Optional[int] = None
 
 
 # ---------------------------------------------------------------------------
@@ -396,6 +407,47 @@ class EbayPublisher:
         if missing:
             problems.append(f"Thiếu item specifics bắt buộc: {', '.join(missing)}")
         return problems
+
+    # -- Cập nhật listing đang chạy (dùng cho monitor) -------------------------------------
+    def update_price_quantity(self, updates: list[PriceQtyUpdate]) -> dict[str, list[EbayErrorDetail]]:
+        """Cập nhật giá và/hoặc số lượng hàng loạt qua bulkUpdatePriceQuantity (tối đa 25 SKU / lần).
+
+        Trả về {sku: [lỗi]} — danh sách rỗng nghĩa là thành công. Lỗi của cả request
+        (token, mạng...) được gán cho mọi SKU trong lô đó.
+        """
+        results: dict[str, list[EbayErrorDetail]] = {}
+        for chunk in _chunks(updates, 25):
+            requests_body = []
+            for u in chunk:
+                offer: dict[str, Any] = {"offerId": u.offer_id}
+                item: dict[str, Any] = {"sku": u.sku, "offers": [offer]}
+                if u.quantity is not None:
+                    item["shipToLocationAvailability"] = {"quantity": u.quantity}
+                    offer["availableQuantity"] = u.quantity
+                if u.price is not None:
+                    offer["price"] = {"value": f"{u.price:.2f}", "currency": self.cfg.currency}
+                requests_body.append(item)
+            try:
+                data = self.client.request(
+                    "POST", "/sell/inventory/v1/bulk_update_price_quantity", step="update",
+                    json={"requests": requests_body},
+                    headers={"Content-Language": self.cfg.content_language, "Content-Type": "application/json"})
+            except EbayApiError as exc:
+                for u in chunk:
+                    results[u.sku] = exc.errors
+                continue
+            answered = set()
+            for resp in data.get("responses") or []:
+                sku = resp.get("sku", "")
+                answered.add(sku)
+                errors = parse_errors({"errors": resp.get("errors")})
+                if not 200 <= int(resp.get("statusCode", 500)) < 300 and not errors:
+                    errors = [EbayErrorDetail(None, f"HTTP {resp.get('statusCode')}")]
+                results[sku] = errors
+            for u in chunk:  # SKU eBay không trả lời → coi là lỗi để không đánh dấu nhầm thành công
+                if u.sku not in answered:
+                    results[u.sku] = [EbayErrorDetail(None, "eBay không trả kết quả cho SKU này")]
+        return results
 
     # -- Đăng bài ------------------------------------------------------------------------
     @staticmethod
@@ -490,6 +542,11 @@ class EbayPublisher:
         result.success = True
         result.url = self.cfg.urls["item"] + result.listing_id
         return result
+
+
+def _chunks(items: list, size: int):
+    for i in range(0, len(items), size):
+        yield items[i:i + size]
 
 
 def parse_aspects_text(text: str) -> dict[str, list[str]]:

@@ -15,6 +15,8 @@ amazon-ebay-arbitrage/
 ├── listing_generator.py   # Title SEO ≤80 ký tự + HTML description đã làm sạch (Claude AI + dự phòng)
 ├── ebay_export.py         # CSV File Exchange cho Seller Hub Reports (đăng hàng loạt)
 ├── ebay_publisher.py      # Auto Listing: đăng trực tiếp qua Sell Inventory API + OAuth + báo lỗi chi tiết
+├── database.py            # SQLite: listing đã đăng + nhật ký thay đổi (data/listings.db)
+├── monitor.py             # Canh giá/tồn kho Amazon → tự hạ số lượng / tăng giá trên eBay (UI hoặc dòng lệnh)
 ├── scraper.py             # "Cổng vào" lớp dữ liệu: get_product_source() / get_market_source()
 ├── config.py              # Đọc API key từ .env
 ├── sources/
@@ -25,7 +27,7 @@ amazon-ebay-arbitrage/
 │   ├── paapi.py           # Amazon PA-API 5 (tự ký AWS SigV4, không cần SDK)
 │   └── ebay.py            # eBay Browse (đang bán) + Marketplace Insights (đã bán)
 ├── data/vero_brands.csv   # Danh sách VeRO khởi đầu — BẠN CẦN BỔ SUNG
-├── tests/                 # 900 test, chạy offline bằng HTTP giả
+├── tests/                 # 926 test, chạy offline bằng HTTP giả
 ├── .env.example           # Mẫu cấu hình key
 ├── config.example.json    # Mẫu config.json cho Auto Listing (copy thành config.json)
 └── requirements.txt
@@ -79,7 +81,7 @@ pip install -r requirements.txt
 
 cp .env.example .env              # Windows: copy .env.example .env  → điền key (tùy chọn)
 streamlit run ui_app.py           # mở http://localhost:8501
-python -m pytest -q               # chạy 900 test (không cần mạng/key)
+python -m pytest -q               # chạy 926 test (không cần mạng/key)
 ```
 
 Chưa có key nào thì tool vẫn chạy đầy đủ với **dữ liệu giả lập**. Nguồn nào có key thì sẽ tự hiện trong sidebar.
@@ -208,7 +210,57 @@ EBAY_REFRESH_TOKEN / EBAY_RUNAME`. File `config.json` chứa bí mật, đã n�
 **Luôn thử trên Sandbox trước.** Nếu một trường tool gửi lên bị Sandbox từ chối, bảng lỗi sẽ chỉ rõ trường nào,
 và bạn sửa trước khi chuyển sang Production.
 
-## 7. Những gì cần kiểm chứng trước khi dùng tiền thật
+## 7. Database & Monitor tự động (`database.py`, `monitor.py`)
+
+**Database:** mỗi listing đăng thành công từ tool được lưu tự động vào `data/listings.db` (SQLite, không cần cài
+thêm). Mỗi listing lưu:
+- ASIN, eBay Item ID và offer ID;
+- giá mua gốc và giá Amazon mới nhất;
+- giá bán hiện tại, số lượng và trạng thái;
+- **toàn bộ giả định tài chính lúc đăng** (thuế, buffer, ship, phí eBay), để monitor tính lại biên đúng như
+  lúc định giá.
+
+Mọi thay đổi được ghi vào bảng nhật ký `events`.
+
+**Quy tắc của monitor** (hàm `decide()` trong `monitor.py`):
+
+| Tình huống | Hành động trên eBay | Trạng thái |
+|---|---|---|
+| Amazon hết hàng | Số lượng = 0 | 📦 `PAUSED_OOS` |
+| Giá Amazon tăng, biên < mục tiêu, giá mới tăng ≤ 25% | Tăng giá lên mức đạt biên (đuôi .99) | 🟢 `ACTIVE` |
+| Giá Amazon tăng mạnh, cần tăng giá > 25% | Số lượng = 0 (không tăng giá sốc) | 📉 `PAUSED_UNPROFITABLE` |
+| Có hàng / đủ lời trở lại | Khôi phục số lượng chuẩn | 🟢 `ACTIVE` |
+| Không lấy được dữ liệu Amazon | Bỏ qua (hoặc tạm dừng nếu bật tùy chọn an toàn) | giữ nguyên |
+| Gửi eBay thất bại | Ghi lỗi, **lần sau thử lại** | ❗ `ERROR` |
+
+Monitor **không tự giảm giá** khi Amazon rẻ đi. Nó chỉ ghi chú cơ hội giảm giá để bạn tự quyết.
+
+**Cách chạy:**
+- **Trên giao diện:** tab **📊 Đang bán & Monitor** → **▶️ Chạy kiểm tra ngay**. Chế độ *Chạy thử* bật sẵn, nên
+  tool chỉ báo cáo; tắt *Chạy thử* đi thì tool mới sửa eBay.
+- **Tự động 24/7, chạy ở cửa sổ terminal riêng:**
+
+```bash
+python monitor.py --once                                   # chạy thử 1 vòng, KHÔNG sửa eBay
+python monitor.py --once --apply --source keepa            # 1 vòng, cập nhật eBay thật
+python monitor.py --apply --interval 60 --source keepa     # chạy liên tục mỗi 60 phút
+python monitor.py --apply --max-increase 15 --pause-on-fetch-error   # chặt chẽ hơn
+```
+
+Thay vì `--interval`, bạn có thể dùng **Task Scheduler** (Windows) hoặc **cron** (macOS/Linux) để gọi
+`python monitor.py --once --apply` mỗi giờ. Monitor đọc token từ `config.json`, chỉ xử lý listing thuộc môi trường
+đang cấu hình (sandbox/production) và ghi log vào `monitor.log`.
+
+**Lưu ý khi chạy thật:**
+- Nguồn **Keepa** cho phép kiểm tra 100 ASIN mỗi lần gọi, rẻ nhất cho monitor. **Rainforest** tốn 1 credit cho
+  mỗi ASIN mỗi lần kiểm tra. Hãy tính chi phí theo `số listing × số lần kiểm tra mỗi ngày`.
+- Dữ liệu từ API có độ trễ. Giá Amazon có thể đổi giữa hai lần kiểm tra, nên vẫn cần giữ buffer giá.
+- Đưa số lượng về 0 có thể làm eBay **kết thúc** listing GTC. Muốn listing chỉ bị ẩn và giữ lịch sử bán, hãy bật
+  **Out-of-stock option** trong Seller Hub → Selling preferences. Nếu listing đã bị kết thúc, lệnh khôi phục số
+  lượng sẽ báo lỗi và listing chuyển sang trạng thái ❗.
+- Nút **Ngừng theo dõi** chỉ dừng monitor cho SKU đó, **không** gỡ listing trên eBay.
+
+## 8. Những gì cần kiểm chứng trước khi dùng tiền thật
 
 Các adapter API được viết theo tài liệu của từng nhà cung cấp và được test bằng **phản hồi giả lập**.
 Chúng **chưa được chạy với key thật**. Khi có key, hãy chạy thử với `limit=3` và kiểm tra:
@@ -223,11 +275,14 @@ Chúng **chưa được chạy với key thật**. Khi có key, hãy chạy th�
 - **Auto Listing**: `ebay_publisher.py` được viết theo cấu trúc Sell Inventory / Account / Taxonomy API mà
   tôi biết. Môi trường phát triển **không truy cập được** trang tài liệu developer.ebay.com để đối chiếu, nên tool
   chỉ được test với một máy chủ eBay giả lập. Hãy chạy trên **Sandbox** trước và đọc kỹ bảng lỗi nếu có.
+- **Monitor**: endpoint `bulk_update_price_quantity` (Sell Inventory API) và cách eBay phản hồi từng SKU được viết
+  theo hiểu biết của tôi, và mới chỉ test với máy chủ eBay giả lập. Hãy chạy `--once --apply` trên **Sandbox** với
+  1–2 listing trước khi bật chạy liên tục trên Production.
 - **AI Listing** dùng Claude với structured output và bật `fallbacks: "default"`: nếu model chính từ chối, API
   tự chạy lại trên model dự phòng; model dự phòng cũng từ chối thì tool tự dùng bộ sinh theo quy tắc. Test dùng
   client giả, nên lần đầu có key hãy tạo thử 1 listing và đọc kết quả.
 
-## 8. ⚠️ Rủi ro chính sách — đọc kỹ
+## 9. ⚠️ Rủi ro chính sách — đọc kỹ
 
 1. **eBay cấm "retail arbitrage dropshipping"**: không được đặt hàng từ một nhà bán lẻ khác (Amazon, Walmart...)
    rồi giao thẳng cho khách eBay. Vi phạm có thể khiến tài khoản bị hạ hạng, hạn chế hoặc khóa vĩnh viễn.

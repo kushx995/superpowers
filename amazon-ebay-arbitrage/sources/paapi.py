@@ -90,8 +90,6 @@ def _get(d: dict, *path: str, default=None):
 class AmazonPAAPISource(ProductSource):
     name = "paapi"
     HOST = "webservices.amazon.com"
-    PATH = "/paapi5/searchitems"
-    TARGET = "com.amazon.paa.sdk.Service.ProductAdvertisingAPIv1.SearchItems"
 
     def __init__(self, access_key: str, secret_key: str, partner_tag: str,
                  region: str = "us-east-1", marketplace: str = "www.amazon.com",
@@ -102,24 +100,33 @@ class AmazonPAAPISource(ProductSource):
         self.region, self.marketplace = region, marketplace
         self.http = http or HttpClient()
 
+    def _post(self, operation: str, payload: dict) -> dict:
+        """Ký & gửi request tới /paapi5/<operation> (searchitems | getitems)."""
+        path = f"/paapi5/{operation.lower()}"
+        body = json.dumps({**payload, "PartnerTag": self.partner_tag, "PartnerType": "Associates",
+                           "Marketplace": self.marketplace, "Resources": RESOURCES})
+        headers = sign_v4(access_key=self.access_key, secret_key=self.secret_key, region=self.region,
+                          service="ProductAdvertisingAPI", host=self.HOST, path=path,
+                          target=f"com.amazon.paa.sdk.Service.ProductAdvertisingAPIv1.{operation}", body=body)
+        return self.http.post(f"https://{self.HOST}{path}", data=body, headers=headers)
+
+    def get_products(self, asins: list[str]) -> list[AmazonProduct]:
+        out: list[AmazonProduct] = []
+        for i in range(0, len(asins), 10):
+            data = self._post("GetItems", {"ItemIds": asins[i:i + 10]})
+            out.extend(self.parse_item(it) for it in _get(data, "ItemsResult", "Items", default=[]) or [])
+        return out
+
     def search(self, keyword: str, category: str = "All", limit: int = 20) -> list[AmazonProduct]:
         products: list[AmazonProduct] = []
         page = 1
         while len(products) < limit and page <= 10:  # PA-API: tối đa 10 item/trang, 10 trang
-            body = json.dumps({
+            data = self._post("SearchItems", {
                 "Keywords": keyword,
                 "SearchIndex": category if category and category != "All" else "All",
                 "ItemCount": 10,
                 "ItemPage": page,
-                "PartnerTag": self.partner_tag,
-                "PartnerType": "Associates",
-                "Marketplace": self.marketplace,
-                "Resources": RESOURCES,
             })
-            headers = sign_v4(access_key=self.access_key, secret_key=self.secret_key, region=self.region,
-                              service="ProductAdvertisingAPI", host=self.HOST, path=self.PATH,
-                              target=self.TARGET, body=body)
-            data = self.http.post(f"https://{self.HOST}{self.PATH}", data=body, headers=headers)
             items = _get(data, "SearchResult", "Items", default=[])
             if not items:
                 break
