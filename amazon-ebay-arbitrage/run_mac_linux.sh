@@ -35,5 +35,10 @@ if ! .venv/bin/python -m pip install -r requirements.txt; then
   exit 1
 fi
 
-echo "[4/4] Mở tool... trình duyệt sẽ tự mở http://localhost:8501 (Ctrl+C để tắt)"
+# Bỏ qua câu hỏi Email của Streamlit ở lần chạy đầu
+if [ ! -f "$HOME/.streamlit/credentials.toml" ]; then
+  mkdir -p "$HOME/.streamlit" && printf '[general]\nemail = ""\n' > "$HOME/.streamlit/credentials.toml"
+fi
+
+echo "[4/4] Mở tool... trình duyệt sẽ tự mở; nếu không, mở địa chỉ ở dòng \"Local URL\" bên dưới (Ctrl+C để tắt)"
 exec .venv/bin/python -m streamlit run ui_app.py

@@ -49,7 +49,13 @@ if errorlevel 1 (
 )
 
 echo.
-echo [4/4] Mo tool... Trinh duyet se tu mo http://localhost:8501
+REM Bo qua cau hoi Email cua Streamlit o lan chay dau
+if not exist "%USERPROFILE%\.streamlit\credentials.toml" (
+    mkdir "%USERPROFILE%\.streamlit" 2>nul
+    (echo [general]& echo email = "") > "%USERPROFILE%\.streamlit\credentials.toml"
+)
+echo [4/4] Mo tool... Trinh duyet se tu mo. Neu khong, mo dia chi o dong "Local URL" ben duoi
+echo        (thuong la http://localhost:8501)
 echo        (Dong cua so nay = tat tool)
 ".venv\Scripts\python.exe" -m streamlit run ui_app.py
 echo.
