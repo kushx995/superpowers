@@ -73,6 +73,13 @@ chiến lược kế tiếp. Có test quét 800 mức giá để đảm bảo gi
 
 ## 3. Cài đặt & chạy
 
+**Cách nhanh nhất:** sau khi cài Python 3.10+ (Windows: nhớ tick *Add Python to PATH*):
+- **Windows:** bấm đúp vào **`run_windows.bat`**.
+- **macOS/Linux:** mở Terminal tại thư mục này rồi chạy `bash run_mac_linux.sh`.
+
+Script tự kiểm tra Python, tạo `.venv`, cài thư viện rồi mở tool tại http://localhost:8501. Nếu gặp lỗi, script sẽ
+báo đang hỏng ở bước nào. Muốn tự làm từng bước thì xem các lệnh dưới đây.
+
 ```bash
 cd amazon-ebay-arbitrage
 python -m venv .venv
